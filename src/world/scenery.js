@@ -155,8 +155,12 @@ export function buildScenery(map, options = {}) {
     group.add(mesh); meshes.push(mesh);
   }
   collisionGroup.updateMatrixWorld(true);
+  let disposed = false;
   return {
     group, collisionGroup, obstacles: props, meshes,
+    boundaryEvidence: { ...structuredClone(CAMPUS_BOUNDARY_EVIDENCE),
+      illustrativeFenceCount: props.filter(p => p.kind === 'fence' && p.source === 'illustrative').length,
+      illustrativeFenceStatus: 'existing-art-not-verified-wall', physicalPerimeterVerified: false },
     replaceBenchGeometry(geometry, benchMaterial) {
       for (const mesh of meshes.filter(m => m.userData.kind === 'bench')) { mesh.geometry = geometry; mesh.material = benchMaterial; mesh.computeBoundingSphere(); }
       this.importedBench = { geometry, material: benchMaterial };
@@ -171,8 +175,12 @@ export function buildScenery(map, options = {}) {
       }
     },
     dispose() {
+      if (disposed) return;
+      disposed = true;
+      meshes.forEach(mesh => mesh.dispose());
       prototypes.forEach(g => g.dispose()); this.importedBench?.geometry.dispose(); this.importedBench?.material.dispose();
       collisionGroup.traverse(m => m.geometry?.dispose()); material.dispose(); colliderMaterial.dispose(); group.clear(); collisionGroup.clear();
     },
   };
 }
+import { CAMPUS_BOUNDARY_EVIDENCE } from '../data/campus-boundary.js';

@@ -1,3 +1,5 @@
+import { classifyBuilding } from './buildingUse.js';
+import { getCampusLandmark } from '../data/campus-landmarks.js';
 import { XMLParser, XMLValidator } from 'fast-xml-parser';
 import { MAP_CONFIG } from '../config.js';
 import { buildPlaceMetadata } from './places.js';
@@ -40,17 +42,25 @@ export function parseOsm(xml) {
 
 export function parseMetres(value) {
   if (value == null) return null;
-  const match = String(value).trim().match(/^([\d.]+)\s*(m|metres?|meters?|ft|feet|')?/i);
+  const match = String(value).trim().match(/^(\d+(?:\.\d+)?|\.\d+)\s*(m|metres?|meters?|ft|feet|')?$/i);
   if (!match) return null;
   const number = Number(match[1]) * (/^(ft|feet|')$/i.test(match[2] || '') ? 0.3048 : 1);
   return Number.isFinite(number) && number > 0 ? number : null;
 }
 
-export function estimateHeight(tags) {
+export function estimateHeight(tags, landmark = null) {
   const explicit = parseMetres(tags.height);
   if (explicit) return {height: explicit, heightSource: 'height'};
-  const levels = Number.parseFloat(tags['building:levels']);
+  const levels = Number(tags['building:levels']);
   if (Number.isFinite(levels) && levels > 0) return {height: levels * 3.2, heightSource: 'building:levels'};
+  const art = landmark?.fields?.heightMeters;
+  if (landmark?.renderHeight === true && ['observed', 'reported'].includes(art?.status) && ['medium', 'high'].includes(art.confidence) && Number.isFinite(art.value) && art.value > 0 && art.sourceUrl && art.observedAt) return { height: art.value, heightSource: `art:${art.status}` };
+  const storeys = landmark?.fields?.storeys;
+  if (landmark?.renderStoreyEnvelope === true && ['observed', 'reported'].includes(storeys?.status) && ['medium', 'high'].includes(storeys.confidence) && !storeys.disputed && Number.isFinite(storeys.value) && storeys.value > 0 && storeys.sourceUrl && storeys.observedAt) return { height: storeys.value * 3.2, heightSource: 'art:storeys-envelope' };
+  const use = classifyBuilding({ tags });
+  if (use === 'worship') return { height: 9.6, heightSource: 'estimate:worship' };
+  if (use === 'construction') return { height: 9.6, heightSource: 'estimate:construction' };
+  if (/^(university|school|college)$/.test(tags.building ?? '') || /^(university|school|college|library)$/.test(tags.amenity ?? '')) return { height: 9.6, heightSource: 'estimate:academic' };
   const description = `${tags.building || ''} ${named(tags)}`.toLowerCase();
   if (/dorm|apartment|hostel|ডরমিটরি/.test(description) || tags.tourism === 'hostel' || /hall/.test(description)) {
     return {height: 12.8, heightSource: 'estimate:dormitory'};
@@ -61,6 +71,26 @@ export function estimateHeight(tags) {
     return {height: 9.6, heightSource: 'estimate:academic'};
   }
   return {height: 9.6, heightSource: 'estimate:unclassified'};
+}
+
+/** Preserve source dimensions separately from any artistic/fallback envelope. */
+export function buildingHeight(tags, feature) {
+  const record = getCampusLandmark(feature), estimate = estimateHeight(tags, record);
+  const sourceUrl = feature?.osmType && feature.id ? `https://www.openstreetmap.org/${feature.osmType}/${feature.id}` : null;
+  const envelope = estimate.heightSource === 'art:storeys-envelope';
+  const art = envelope ? record.fields.storeys : estimate.heightSource.startsWith('art:') ? record.fields.heightMeters : null;
+  const mapped = ['height', 'building:levels'].includes(estimate.heightSource);
+  return { ...estimate, heightEvidence: {
+    status: envelope ? 'provisional' : art?.status ?? (mapped ? 'mapped' : 'inferred'),
+    source: envelope ? 'reported-storey-art-envelope' : art ? 'art-override' : mapped ? 'osm' : 'heuristic',
+    sourceUrl: art?.sourceUrl ?? (mapped ? sourceUrl : null),
+    observedAt: art?.observedAt ?? null,
+    confidence: envelope ? 'low' : art?.confidence ?? (mapped ? 'medium' : 'low'),
+    basis: estimate.heightSource,
+    metresPerStorey: envelope || estimate.heightSource === 'building:levels' ? 3.2 : null,
+    measured: false,
+    note: envelope ? record.storeyEnvelopeNote : mapped ? 'OSM value; not an independent measurement. Levels use a 3.2 m art envelope.' : art ? 'Source-backed art envelope; retain source datum and observation date.' : 'Unmeasured fallback; not a physical survey.'
+  } };
 }
 
 function assembleRings(members, ways, positions, warnings, label) {
@@ -151,8 +181,8 @@ export function buildMapData(parsed, userConfig = {}) {
     }
     const outerTags = outerMembers.map(m => ways.get(m.ref)?.tags || {}).reduce((a, b) => ({...a, ...b}), {});
     const tags = {...outerTags, ...relation.tags};
-    const feature = {id: relation.id, name: named(tags), tags, polygons, sourceWayIds: outerMembers.map(m => m.ref)};
-    if (isBuilding && intersectsBounds(polygons, bounds)) data.buildings.push({...feature, ...estimateHeight(tags)});
+    const feature = {id: relation.id, osmType: 'relation', name: named(tags), tags, polygons, sourceWayIds: outerMembers.map(m => m.ref)};
+    if (isBuilding && intersectsBounds(polygons, bounds)) data.buildings.push({...feature, ...buildingHeight(tags, feature)});
     else if (!isBuilding) {
       const clipped = clipPolygons(polygons, bounds);
       if (clipped.length) (water ? data.water : data.greens).push({...feature, polygons: clipped, kind: water || green});
@@ -181,8 +211,8 @@ export function buildMapData(parsed, userConfig = {}) {
     const tags = way.tags;
     if (building(tags) && !represented.has(way.id)) {
       const ring = wayRing(way, positions, diagnostics.warnings);
-      if (ring && intersectsBounds([[ring]], bounds)) data.buildings.push({id: way.id, name: named(tags), tags,
-        polygons: [[ring]], sourceWayIds: [way.id], ...estimateHeight(tags)});
+      if (ring && intersectsBounds([[ring]], bounds)) data.buildings.push({id: way.id, osmType: 'way', name: named(tags), tags,
+        polygons: [[ring]], sourceWayIds: [way.id], ...buildingHeight(tags, { id: way.id, osmType: 'way' })});
     }
     const green = greenKind(tags), water = waterKind(tags);
     if ((green || water) && !represented.has(way.id)) {
@@ -203,14 +233,16 @@ export function buildMapData(parsed, userConfig = {}) {
     }
     const isBridge = tags.bridge === 'yes' || way.id === '1317423268';
     if (isBridge) {
-      const width = parseMetres(tags.width) || 2.2;
-      data.bridges.push({id: way.id, name: named(tags) || 'Lake footbridge', tags, width, paths,
+      const evidence = resolveRoadWidth({id:way.id, kind:'footway', sourceWidth:parseMetres(tags.width), tags, override:CAMPUS_ROAD_WIDTH_OVERRIDES[way.id] ?? null});
+      const { width } = evidence;
+      data.bridges.push({id: way.id, name: named(tags) || 'Lake footbridge', tags, ...evidence, paths,
         polygons: bufferPaths(paths, width, bounds), elevation: .45, rampLength: 4});
     }
     if (tags.highway) {
-      const kind = tags.highway, width = parseMetres(tags.width) || ({service: 6, unclassified: 6, path: 2.2,
-        footway: 2.2, pedestrian: 2.2, cycleway: 2.2, tertiary: 8, trunk: 7}[kind] || 6);
-      data.roads.push({id: way.id, name: named(tags), tags, kind, width, paths,
+      const kind = tags.highway;
+      const evidence = resolveRoadWidth({id:way.id, kind, sourceWidth:parseMetres(tags.width), tags, override:CAMPUS_ROAD_WIDTH_OVERRIDES[way.id] ?? null});
+      const { width } = evidence;
+      data.roads.push({id: way.id, name: named(tags), tags, kind, ...evidence, paths,
         
         polygons: bufferPaths(paths, width, bounds)});
     }
@@ -259,3 +291,5 @@ export async function loadMap(url, onProgress = () => {}, options = {}) {
   onProgress(`Loaded ${data.buildings.length} building footprints and ${data.roads.length} mapped roads.`);
   return data;
 }
+import { resolveRoadWidth } from './roadEvidence.js';
+import { CAMPUS_ROAD_WIDTH_OVERRIDES } from '../data/campus-roads.js';

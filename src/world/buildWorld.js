@@ -1,14 +1,19 @@
 import * as THREE from 'three';
+import { getCampusLandmark } from '../data/campus-landmarks.js';
+import { buildCentralMosque, CENTRAL_MOSQUE_ID } from './landmarks/centralMosque.js';
+import { academicFacadeGeometry } from './academicFacades.js';
+import { buildAuditorium, AUDITORIUM_ID } from './landmarks/auditorium.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { buildingGeometry, surfaceGeometry, geometryMaterialPart, polygonCenter, lineSegmentsGeometry } from './geometry.js';
 import { makeBridgeGeometries, measurePath, samplePath } from './bridge.js';
 import { buildRoadAppearance, ROAD_LEVELS } from './roads.js';
 import { buildingPalette, hashId, LAND_COLORS } from './appearance.js';
 import { facadeGeometry, tintGeometry, chooseEntries } from './facades.js';
-import { planVegetation } from './vegetation.js';
+import { planReferenceVegetation } from './referenceVegetation.js';
 import { horizontalUVs, facadeUVs, ensureBatchUVs, disposeWorldTextures } from './assets.js';
 import { buildScenery } from './scenery.js';
 import { buildMainGate } from './mainGate.js';
+import { buildWaterDetails } from './waterDetail.js';
 
 export { bridgeHeightAt } from './bridge.js';
 
@@ -164,9 +169,12 @@ export function buildWorld(mapData, { onProgress = () => {}, preparedData = null
     batches.add(tintGeometry(geometry, 0xc2c5b8), materials.edges, x, z, { kind: 'road' });
   }
   onProgress('Extruding campus buildings');
-  const entryTreatments = [];
+  const entryTreatments = [], landmarkModels = [], academicFacadeProfiles = [];
   for (const building of mapData.buildings ?? []) {
+    const isCentralMosque = building.osmType === 'way' && building.id === CENTRAL_MOSQUE_ID;
+    const isAuditorium = building.osmType === 'relation' && building.id === AUDITORIUM_ID;
     const palette = buildingPalette(building), entries = chooseEntries(building, mapData.roads, mapData.entrances);
+    const academicFacade = academicFacadeGeometry(building, palette, entries);
     entryTreatments.push(...entries.map(e => ({ buildingId: building.id, source: e.source, nodeId: e.nodeId, position: e.edge.at(e.distance, 0, 0) })));
     for (const polygon of building.polygons) {
       const [x, z] = polygonCenter(polygon);
@@ -178,9 +186,26 @@ export function buildWorld(mapData, { onProgress = () => {}, preparedData = null
       batches.add(tintGeometry(horizontalUVs(geometryMaterialPart(geometry, 0), 3), palette.roof), roofMaterial, x, z, { collision: true, kind: 'building' });
       batches.add(tintGeometry(facadeUVs(geometryMaterialPart(geometry, 1), polygon, wallMaterial === materials.brick ? 2.5 : 3.5), palette.wall), wallMaterial, x, z, { collision: true, kind: 'building' });
       geometry.dispose();
-      const facade = facadeGeometry(polygon, building.height, palette, entries);
-      batches.add(facade.windows, materials.windows, x, z, { kind: 'facade' });
-      batches.add(facade.details, materials.decor, x, z, { kind: 'facade' });
+      const facade = isCentralMosque || isAuditorium || academicFacade ? null : facadeGeometry(polygon, building.height, palette, entries);
+      if (facade) {
+        batches.add(facade.windows, materials.windows, x, z, { kind: 'facade' });
+        batches.add(facade.details, materials.decor, x, z, { kind: 'facade' });
+      }
+    }
+    if (academicFacade) {
+      const [x, z] = polygonCenter(building.polygons[0]);
+      batches.add(academicFacade.windows, materials.windows, x, z, { kind: 'facade' });
+      batches.add(academicFacade.details, materials.decor, x, z, { kind: 'facade' });
+      academicFacadeProfiles.push(academicFacade.diagnostics);
+    }
+    if (isAuditorium) {
+      const model = buildAuditorium(building, { entrances: entries.length ? entries : undefined, baseHeight: building.height });
+      landmarkModels.push(model); group.add(model.group);
+    }
+  }
+  for (const building of mapData.buildings ?? []) {
+    if (building.osmType === 'way' && building.id === CENTRAL_MOSQUE_ID) {
+      const model = buildCentralMosque(building); landmarkModels.push(model); group.add(model.group);
     }
   }
   for (const bridge of mapData.bridges ?? []) {
@@ -190,7 +215,9 @@ export function buildWorld(mapData, { onProgress = () => {}, preparedData = null
     for (const rail of geometries.rails) batches.add(rail, materials.rail, ...centre, { kind: 'bridge-rail' });
   }
   batches.finish();
-  const vegetation = preparedData?.vegetation ?? planVegetation(mapData);
+  const waterDetails = buildWaterDetails(mapData);
+  group.add(waterDetails.group);
+  const vegetation = preparedData?.vegetation ?? planReferenceVegetation(mapData);
   addTrees(mapData, group, materials, vegetation);
   const scenery = buildScenery(mapData, { vegetation, preparedProps: preparedData?.scenery });
   group.add(scenery.group);
@@ -208,9 +235,11 @@ export function buildWorld(mapData, { onProgress = () => {}, preparedData = null
   group.add(footprintDebug);
   group.updateMatrixWorld(true); collisionGroup.updateMatrixWorld(true);
   onProgress('Campus geometry ready');
-  let elapsed = 0;
+  let elapsed = 0, disposed = false;
   const world = {
     group, collisionGroup, materials, scenery, bridgeMeshes: batches.bridgeMeshes, buildingMeshes: batches.buildingMeshes,
+    landmarkModels, academicFacadeProfiles, waterDetails,
+    landmarkRecords: (mapData.buildings ?? []).map(getCampusLandmark).filter(Boolean),
     decoration: { roads: roadAppearance, vegetation, entryTreatments }, footprintDebug, labelAnchors: mapData.places ?? [],
     update(dt) {
       elapsed += Math.max(0, dt);
@@ -220,9 +249,13 @@ export function buildWorld(mapData, { onProgress = () => {}, preparedData = null
       materials.water.color.setHex(LAND_COLORS.water).multiplyScalar(lightness);
     },
     dispose() {
+      if (disposed) return;
+      disposed = true;
+      landmarkModels.forEach(model => model.dispose());
+      waterDetails.dispose();
       disposeWorldTextures(world); scenery.dispose(); mainGate?.dispose();
       const geometries = new Set();
-      group.traverse(object => { if (object.geometry) geometries.add(object.geometry); });
+      group.traverse(object => { if (object.isInstancedMesh) object.dispose(); if (object.geometry) geometries.add(object.geometry); });
       collisionGroup.traverse(object => { if (object.geometry) geometries.add(object.geometry); });
       geometries.forEach(geometry => geometry.dispose());
       const allMaterials = new Set(Object.values(materials).flat());
