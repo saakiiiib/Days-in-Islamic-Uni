@@ -2,25 +2,22 @@
 
 - Play: https://saakiiiib.github.io/gta-islamic-university/
 - Repository: https://github.com/saakiiiib/gta-islamic-university
-- Publishing source: `main` branch, `/docs`.
+- Publishing source: GitHub Actions (`.github/workflows/deploy-pages.yml`), building `dist/` on push to `main`.
 
 The same URL runs in desktop browsers and Android/iPhone browsers with WebGL 2. Phones automatically receive a movement/steering joystick, swipe camera and touch actions; landscape is recommended. Desktop keyboard/mouse controls remain. Playing requires no install, terminal, backend, API key or paid hosting. No PWA, service worker, native wrapper or APK is included.
 
 ## Publish changes
 
 ```sh
-npm install
+npm ci
 npm test
 npm run build
-npm run build:pages
-git add --all
-git commit -m "Add living campus activity, service vans and realistic scenery"
 git push origin main
 ```
 
-Review generated `docs/` files before committing. GitHub Pages should remain set to **Deploy from a branch → main → /docs**. Relative Vite assets support the repository's nested project URL.
+GitHub Pages is configured to deploy from **GitHub Actions** (`deploy-pages.yml`). Pushing to `main` automatically runs `npm ci`, `npm test`, and `npm run build`, then publishes `dist/`. Relative Vite assets support the repository's nested project URL. Generated `docs/` and local `validation/` screenshots are ignored in git.
 
-Confirm the **pages build and deployment** workflow for the pushed commit succeeds. Then check hosted HTML, the exact hashed JavaScript/CSS URLs referenced by it, the favicon, and `data/map.osm`. The map must contain 770,269 bytes and match:
+Confirm the **Deploy GitHub Pages** workflow for the pushed commit succeeds. Then check hosted HTML, the exact hashed JavaScript/CSS URLs referenced by it, the favicon, and `data/map.osm`. The map must contain 770,269 bytes and match:
 
 ```text
 8c1c2810c8eb01496b1d5bc19919c124ea5fec5bf2977da9a1a45cf2570d79d9
