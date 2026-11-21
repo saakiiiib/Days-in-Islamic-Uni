@@ -1,20 +1,24 @@
-# Map data credits and data license
+# Map Data Credits and License
 
 **© OpenStreetMap contributors**
 
 - Attribution and copyright: https://www.openstreetmap.org/copyright
 - Data license: Open Data Commons Open Database License 1.0 (ODbL): https://opendatacommons.org/licenses/odbl/1-0/
-- Original source: the user-supplied `map.osm` export for Islamic University, Kushtia, Bangladesh.
-- Bundled source file: `public/data/map.osm`, copied unchanged from the supplied file.
+- Bundled source file: `public/data/map.osm` (770,269 bytes, export covering Islamic University, Kushtia, Bangladesh).
 
-The OSM database is available under ODbL 1.0. The generated map model derives from that data; these data rights and attribution are retained. Application code, character geometry and illustrative materials are separate from the OSM data license. No Google Maps imagery or paid map API is used. The game does not request map tiles at runtime.
+The OpenStreetMap database is licensed under ODbL 1.0. The generated campus geometry derives from this extract, and all OSM attribution and data rights are retained. Application source code (`LICENSE`), procedural character/vehicle geometry, and illustrative materials are separate from the OSM data license. No Google Maps imagery, paid map API, or runtime tile requests are used.
 
-Source snapshot: 3,260 nodes, 482 ways, 14 relations. The selected context contains 189 building footprints, 42 road/path ways, 16 green features, four water features, one footbridge, one tree point and one tree row. Heights, widths, façades, road edging, entry treatments, decorative planting and flat terrain are documented approximations in README.md. Labels use source names and named entrance refs; they do not introduce new landmark names. Five mapped entrance nodes are preserved as metadata.
+## Source Extract vs. Trimmed Campus Area
 
-Geometry repair: the two orphan inner rings of source relation `18079383` are associated with their unique enclosing existing building relation `18079382` during import. This does not add a new geographic footprint and does not alter the raw export. Incomplete administrative boundaries are excluded from gameplay.
+- **Raw OSM snapshot (`public/data/map.osm`)**: 3,260 nodes, 482 ways, 14 relations (189 building footprints, 42 road/path ways, 16 green features, 4 water features, 1 footbridge, 1 tree point, and 1 tree row across the bounding box).
+- **Trimmed playable campus**: The game clips the bounding box to the Islamic University campus perimeter, retaining **57 campus buildings, 40 road/path ways, and 3 separate water features** (excluding 132 outside buildings). Heights, widths, facades, seasonal planting, and flat terrain are documented approximations (see `docs/campus-realism.md` and `docs/height-provenance.md`).
+- **Geometry repair**: Two orphan inner rings of OSM relation `18079383` are associated with their enclosing building relation `18079382` during import without altering the raw XML extract.
 
-The production build includes `data/map.osm` and this notice as `data/NOTICE.txt`.
+The production build includes `data/map.osm` and `data/NOTICE.txt`.
 
-The electric cargo tricycle and pedestrian characters are original procedural Three.js geometry. The van's shape/paint is inspired by the user's supplied visual reference; no reference bitmap, watermark or third-party game model is included. These game actors and their spawn/route choices are illustrative additions, not surveyed OSM objects. Campus geographic data and attribution remain unchanged.
+## Procedural Actors & Bundled Media
 
-The four MP3 reaction recordings under `public/audio/npc/` were supplied by the project owner and are copied unchanged. Near-miss and collision categories are separate; transcripts are not displayed. No synthetic voice files, synthesizer, paid service or remote audio service is used. See `public/audio/README.txt`. Roadside walking corridors are navigation estimates derived from the existing road centre lines, not newly surveyed paths or map geometry. Drivers, passengers, health and damage are fictional gameplay behavior.
+- **Vehicles and characters**: Electric cargo vans, the Red Double Decker Bus, IU Ambulance, and pedestrian models are original procedural Three.js geometry. Spawn routes, health, and interactions are fictional gameplay mechanics, not surveyed OSM objects.
+- **Voice reactions (`public/audio/npc/`)**: Four MP3 reaction clips supplied by the repository owner (see `public/audio/README.txt`). No speech synthesis or external audio service is used.
+- **Landing & character portraits (`src/assets/`)**: `campus-story-bg.webp`, `portrait-hujur.png`, and `portrait-niqab.png` are project-owned artwork bundled for the landing screen.
+- **Environment textures & bench (`public/visual/`)**: CC0-1.0 assets from ambientCG and Poly Haven; see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) and `public/visual/manifest.json`.

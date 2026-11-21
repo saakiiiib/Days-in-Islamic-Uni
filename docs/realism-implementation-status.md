@@ -25,6 +25,6 @@ The research was merged as PR1. Twenty implementation/evidence changes are separ
 |19|English/Bangla/current/historical search and labels|Installed-font/mobile visual review and current physical plaque evidence|
 |20|Season-correct sun, art sky settings, recursive preparation fingerprint, cleanup and CPU budget|Fixed-view captures, interactive desktop/mobile smoke and measured GPU/frame budgets|
 
-See [lighting/check results](lighting-and-validation.md), [source research](campus-realism.md), individual landmark notes and [AGENT_HANDOFF](../AGENT_HANDOFF.md). Source OSM/ODbL attribution remains intact,34 reference photos retain individual open-license credits, and unknown/planned values are not relabeled as measured. No unsupported monument/tower/boundary placement is activated.
+See [lighting/check results](lighting-and-validation.md), [source research](campus-realism.md), individual landmark notes. Source OSM/ODbL attribution remains intact,34 reference photos retain individual open-license credits, and unknown/planned values are not relabeled as measured. No unsupported monument/tower/boundary placement is activated.
 
 The practical next step is manual PR review followed by controlled browser QA and a dated georeferenced campus survey. Repeating automated research cannot manufacture missing measurements. The requested November10 further-improvement window has elapsed; no endless external runner was restarted.
