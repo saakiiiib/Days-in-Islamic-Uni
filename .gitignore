@@ -1,5 +1,8 @@
 node_modules/
 dist/
-docs/
 validation/
 .DS_Store
+Thumbs.db
+*.zip
+__pycache__/
+.env*

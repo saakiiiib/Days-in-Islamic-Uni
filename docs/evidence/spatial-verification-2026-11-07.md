@@ -1,6 +1,6 @@
 # Campus verification addendum — 7 November 2026, Codex
 
-Research-only notes for tasks 4, 6, 7, 9, 10, 14, 16 and 17. Read the repository's AGENT_HANDOFF.md, docs-dev/campus-realism.md, OSM inventory and existing image manifest. No repository files or branches changed. Absolute monument anchors, new tower identity-to-footprint matches, surveyed heights, road widths and boundary segment coordinates remain unverified; do not mark those acceptance conditions as completed.
+Research-only notes for tasks 4, 6, 7, 9, 10, 14, 16 and 17. Read the repository's AGENT_HANDOFF.md, docs/campus-realism.md, OSM inventory and existing image manifest. No repository files or branches changed. Absolute monument anchors, new tower identity-to-footprint matches, surveyed heights, road widths and boundary segment coordinates remain unverified; do not mark those acceptance conditions as completed.
 
 ## Useful new evidence
 

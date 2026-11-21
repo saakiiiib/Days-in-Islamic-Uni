@@ -3,7 +3,7 @@
 ## What does the repository represent?
 
 ### Takeaway
-The existing checkout is clean at base commit `0433e85130ad0b52aec00e77338f4e5fc81da15b`; the research branch is `codex/campus-research`. The game reads a bundled OSM XML extract, then creates geometry offline and at runtime. There is no live Overpass ingestion in the application. Research adds only `docs-dev/` and `references/`; no application, workflow or deployed files changed.
+The existing checkout is clean at base commit `0433e85130ad0b52aec00e77338f4e5fc81da15b`; the research branch is `codex/campus-research`. The game reads a bundled OSM XML extract, then creates geometry offline and at runtime. There is no live Overpass ingestion in the application. Research adds only `docs/` and `references/`; no application, workflow or deployed files changed.
 
 ### Cited findings
 - Target source and live Pages endpoint: [repository](https://github.com/saakiiiib/gta-islamic-university), [game](https://saakiiiib.github.io/gta-islamic-university/). `HOSTING.md:1` says deployment is main branch `/docs`.
@@ -70,4 +70,4 @@ The largest immediate gaps are heights, landmark silhouettes and source-backed i
 - Exact building heights, current facade colors, roof systems, wall/fence continuity, detailed tree species/locations and all physical-campus completeness need dated photo/survey evidence. Do not convert architectural impressions into measured dimensions.
 - Baseline validation: `npm test` completed successfully with fail=0; exact test count in current-task `work/campus-baseline-tests.txt`. Direct Vite build to isolated current-task `work/campus-baseline-build` passed, warning about chunks >500 kB. Standard `npm run build` and `npm ci` were intentionally not run because they modify existing generated/dependency files; source and deployment unchanged. These checks do not prove browser gameplay or current production quality.
 
-The repeatable analyzer is `analyze-osm.mjs`; run `node docs-dev/evidence/analyze-osm.mjs` from the repo. It only writes research inventory. All 57 derived building IDs, representative anchors, source tags and estimated heights are in `osm-inventory.json.gameDerived.buildings`, ready for the report writer's exhaustive represented-building appendix.
+The repeatable analyzer is `analyze-osm.mjs`; run `node docs/evidence/analyze-osm.mjs` from the repo. It only writes research inventory. All 57 derived building IDs, representative anchors, source tags and estimated heights are in `osm-inventory.json.gameDerived.buildings`, ready for the report writer's exhaustive represented-building appendix.
