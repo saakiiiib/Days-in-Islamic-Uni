@@ -106,3 +106,287 @@ export function campusLighting({ date = DEFAULT_LIGHTING_DATE, latitude = CAMPUS
   return { ...palette, solar, sunOffset, preset, appearanceStatus: 'artistic',
     appearanceReason: 'Fixed representative date and named daytime palette; not actual weather or measured campus climatology.' };
 }
+
+// Representative Kushtia (UTC+6 / BST) dates across three seasons and four times of day:
+// morning (~08:35), midday (~12:05), golden (~16:15), and dusk (~17:45).
+export const TIME_OF_DAY_DATES = freeze({
+  march: {
+    morning: '2026-03-20T02:35:00.000Z',
+    midday: '2026-03-20T06:05:00.000Z',
+    golden: '2026-03-20T10:15:00.000Z',
+    dusk: '2026-03-20T11:45:00.000Z',
+  },
+  june: {
+    morning: '2026-06-21T02:35:00.000Z',
+    midday: '2026-06-21T06:05:00.000Z',
+    golden: '2026-06-21T10:15:00.000Z',
+    dusk: '2026-06-21T11:45:00.000Z',
+  },
+  december: {
+    morning: '2026-12-21T02:35:00.000Z',
+    midday: '2026-12-21T06:05:00.000Z',
+    golden: '2026-12-21T10:15:00.000Z',
+    dusk: '2026-12-21T11:45:00.000Z',
+  },
+});
+
+// Named artistic lighting + Preetham Sky + calibrated LDR IBL presets for time-of-day moods.
+export const TIME_OF_DAY_PRESETS = freeze({
+  morning: {
+    label: 'Morning',
+    localTimeLabel: '08:35 BST',
+    skyColor: 0x9ec8eb,
+    sun: { color: 0xfff0d4, intensity: 2.35 },
+    hemisphere: { skyColor: 0x9ec8eb, groundColor: 0x566945, intensity: 0.78 },
+    fog: { color: 0xb7d4e6, near: 340, far: 1200 },
+    sky: {
+      turbidity: 2.6,
+      rayleigh: 1.45,
+      mieCoefficient: 0.003,
+      mieDirectionalG: 0.78,
+      cloudOpacity: 0.30,
+      cloudTint: 0xfff7ec,
+    },
+    envColors: {
+      zenith: 0x4586c9,
+      horizon: 0xc9e1f0,
+      ground: 0x566945,
+    },
+    envIntensity: 0.45,
+    exposure: 0.92,
+    emissiveBoost: 0.0,
+    minSunAltitudeDeg: 10,
+  },
+  midday: {
+    label: 'Midday',
+    localTimeLabel: '12:05 BST',
+    skyColor: 0x9bc7e6,
+    sun: { color: 0xfff5e4, intensity: 2.55 },
+    hemisphere: { skyColor: 0xa4cee8, groundColor: 0x5c6e4b, intensity: 0.82 },
+    fog: { color: 0xbfd8e6, near: 360, far: 1250 },
+    sky: {
+      turbidity: 3.0,
+      rayleigh: 1.35,
+      mieCoefficient: 0.0035,
+      mieDirectionalG: 0.78,
+      cloudOpacity: 0.28,
+      cloudTint: 0xffffff,
+    },
+    envColors: {
+      zenith: 0x3b7ec7,
+      horizon: 0xd0e4f0,
+      ground: 0x5c6e4b,
+    },
+    envIntensity: 0.45,
+    exposure: 0.90,
+    emissiveBoost: 0.0,
+    minSunAltitudeDeg: 15,
+  },
+  golden: {
+    label: 'Golden Hour',
+    localTimeLabel: '16:15 BST',
+    skyColor: 0x9bb8d6,
+    sun: { color: 0xffcf87, intensity: 2.45 },
+    hemisphere: { skyColor: 0x93b7db, groundColor: 0x5b5d44, intensity: 0.85 },
+    fog: { color: 0xd8c3a5, near: 300, far: 1100 },
+    sky: {
+      turbidity: 4.8,
+      rayleigh: 2.15,
+      mieCoefficient: 0.0055,
+      mieDirectionalG: 0.82,
+      cloudOpacity: 0.38,
+      cloudTint: 0xffddb0,
+    },
+    envColors: {
+      zenith: 0x4b7cb8,
+      horizon: 0xebc596,
+      ground: 0x5b5d44,
+    },
+    envIntensity: 0.48,
+    exposure: 0.92,
+    emissiveBoost: 0.25,
+    minSunAltitudeDeg: 18,
+  },
+  dusk: {
+    label: 'Dusk',
+    localTimeLabel: '17:45 BST',
+    skyColor: 0x4b587d,
+    sun: { color: 0xff8f4c, intensity: 1.05 },
+    hemisphere: { skyColor: 0x6f87bd, groundColor: 0x3b3e47, intensity: 1.05 },
+    fog: { color: 0x6a708c, near: 240, far: 900 },
+    sky: {
+      turbidity: 7.2,
+      rayleigh: 2.8,
+      mieCoefficient: 0.011,
+      mieDirectionalG: 0.86,
+      cloudOpacity: 0.44,
+      cloudTint: 0xf7a882,
+    },
+    envColors: {
+      zenith: 0x3b4f87,
+      horizon: 0xd1927a,
+      ground: 0x3b3e47,
+    },
+    envIntensity: 0.55,
+    exposure: 0.98,
+    emissiveBoost: 1.0,
+    minSunAltitudeDeg: 4.5,
+  },
+});
+
+const SKY_CONDITION_MODIFIERS = freeze({
+  clear: {
+    sunScale: 1.0,
+    hemiScale: 1.0,
+    turbidityAdd: 0.0,
+    rayleighScale: 1.0,
+    mieScale: 1.0,
+    mieGDelta: 0.0,
+    fogNearScale: 1.0,
+    fogFarScale: 1.0,
+    cloudOpacityScale: 0.85,
+    exposureOffset: 0.0,
+    skyBlend: 0.0,
+    skyBlendTarget: 0xc5d2d5,
+  },
+  hazy: {
+    sunScale: 0.84,
+    hemiScale: 1.08,
+    turbidityAdd: 3.2,
+    rayleighScale: 0.92,
+    mieScale: 1.45,
+    mieGDelta: 0.03,
+    fogNearScale: 0.82,
+    fogFarScale: 0.84,
+    cloudOpacityScale: 1.12,
+    exposureOffset: -0.02,
+    skyBlend: 0.22,
+    skyBlendTarget: 0xcfd6d4,
+  },
+  overcast: {
+    sunScale: 0.32,
+    hemiScale: 1.22,
+    turbidityAdd: 7.5,
+    rayleighScale: 0.55,
+    mieScale: 2.1,
+    mieGDelta: -0.08,
+    fogNearScale: 0.68,
+    fogFarScale: 0.68,
+    cloudOpacityScale: 1.55,
+    exposureOffset: -0.04,
+    skyBlend: 0.45,
+    skyBlendTarget: 0xc2c8c8,
+  },
+});
+
+function lerpHexColor(a, b, t) {
+  if (t <= 0) return a;
+  if (t >= 1) return b;
+  const ar = (a >> 16) & 255, ag = (a >> 8) & 255, ab = a & 255;
+  const br = (b >> 16) & 255, bg = (b >> 8) & 255, bb = b & 255;
+  const r = Math.round(ar + (br - ar) * t);
+  const g = Math.round(ag + (bg - ag) * t);
+  const bl = Math.round(ab + (bb - ab) * t);
+  return (r << 16) | (g << 8) | bl;
+}
+
+function visualDirectionWithHorizonFloor(solar, minAltitudeDeg) {
+  const minAlt = Math.max(0.5, minAltitudeDeg) * RAD;
+  const rawAlt = Math.asin(clamp(solar.direction.y));
+  const clampedAlt = Math.max(minAlt, rawAlt);
+  const horiz = Math.hypot(solar.direction.x, solar.direction.z);
+  const cosAlt = Math.cos(clampedAlt);
+  const sinAlt = Math.sin(clampedAlt);
+  if (horiz > 1e-8) {
+    return {
+      x: (solar.direction.x / horiz) * cosAlt,
+      y: sinAlt,
+      z: (solar.direction.z / horiz) * cosAlt,
+    };
+  }
+  return { x: 0, y: sinAlt, z: cosAlt };
+}
+
+/**
+ * Combines exact NOAA solar geometry for a seasonal Kushtia time-of-day with
+ * tuned atmospheric scattering and lighting palettes. Preserves true NOAA solar
+ * metadata in `solar`, while lifting `visualSunDirection` / `sunOffset` above an
+ * aesthetic horizon floor so golden hour and dusk retain warm raking light.
+ */
+export function campusTimeOfDayLighting({
+  season = 'march',
+  timeOfDay = 'golden',
+  sky = 'clear',
+  latitude = CAMPUS_LATITUDE,
+  longitude = CAMPUS_LONGITUDE,
+} = {}) {
+  if (!Object.hasOwn(TIME_OF_DAY_DATES, season)) {
+    throw new RangeError('Unknown season; choose march, june or december');
+  }
+  if (!Object.hasOwn(TIME_OF_DAY_PRESETS, timeOfDay)) {
+    throw new RangeError('Unknown timeOfDay; choose morning, midday, golden or dusk');
+  }
+  if (!Object.hasOwn(SKY_CONDITION_MODIFIERS, sky)) {
+    throw new RangeError('Unknown sky preset; choose clear, hazy or overcast');
+  }
+  const date = TIME_OF_DAY_DATES[season][timeOfDay];
+  const base = TIME_OF_DAY_PRESETS[timeOfDay];
+  const mod = SKY_CONDITION_MODIFIERS[sky];
+  const solar = campusSunPosition({ date, latitude, longitude });
+  const visualSunDirection = visualDirectionWithHorizonFloor(solar, base.minSunAltitudeDeg);
+  const sunOffset = {
+    x: visualSunDirection.x * 150,
+    y: visualSunDirection.y * 150,
+    z: visualSunDirection.z * 150,
+  };
+  const skyColor = lerpHexColor(base.skyColor, mod.skyBlendTarget, mod.skyBlend);
+  const fogColor = lerpHexColor(base.fog.color, mod.skyBlendTarget, mod.skyBlend);
+  const cloudTint = lerpHexColor(base.sky.cloudTint, 0xd8dddd, mod.skyBlend * 0.7);
+  const envColors = {
+    zenith: lerpHexColor(base.envColors.zenith, mod.skyBlendTarget, mod.skyBlend),
+    horizon: lerpHexColor(base.envColors.horizon, mod.skyBlendTarget, mod.skyBlend * 0.85),
+    ground: base.envColors.ground,
+  };
+  const skyParams = {
+    turbidity: Number((base.sky.turbidity + mod.turbidityAdd).toFixed(3)),
+    rayleigh: Number((base.sky.rayleigh * mod.rayleighScale).toFixed(3)),
+    mieCoefficient: Number((base.sky.mieCoefficient * mod.mieScale).toFixed(5)),
+    mieDirectionalG: Number(Math.max(0.5, Math.min(0.98, base.sky.mieDirectionalG + mod.mieGDelta)).toFixed(3)),
+    cloudOpacity: Number(Math.min(0.88, Math.max(0.08, base.sky.cloudOpacity * mod.cloudOpacityScale)).toFixed(3)),
+    cloudTint,
+  };
+  return {
+    season,
+    timeOfDay,
+    preset: sky,
+    skyPreset: sky,
+    label: base.label,
+    localTimeLabel: base.localTimeLabel,
+    skyColor,
+    sun: {
+      color: base.sun.color,
+      intensity: Number((base.sun.intensity * mod.sunScale).toFixed(3)),
+    },
+    hemisphere: {
+      skyColor: lerpHexColor(base.hemisphere.skyColor, mod.skyBlendTarget, mod.skyBlend * 0.5),
+      groundColor: base.hemisphere.groundColor,
+      intensity: Number((base.hemisphere.intensity * mod.hemiScale).toFixed(3)),
+    },
+    fog: {
+      color: fogColor,
+      near: Math.round(base.fog.near * mod.fogNearScale),
+      far: Math.round(base.fog.far * mod.fogFarScale),
+    },
+    sky: skyParams,
+    envColors,
+    envIntensity: base.envIntensity,
+    exposure: Number((base.exposure + mod.exposureOffset).toFixed(3)),
+    emissiveBoost: base.emissiveBoost,
+    solar,
+    visualSunDirection,
+    sunOffset,
+    appearanceStatus: 'artistic',
+    appearanceReason: 'Fixed seasonal Kushtia time-of-day art palette; not actual weather or measured campus climatology.',
+  };
+}
+

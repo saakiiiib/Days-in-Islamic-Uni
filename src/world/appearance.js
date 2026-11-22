@@ -19,5 +19,5 @@ export function buildingPalette(building) {
   return { kind, ...family, wall: family.walls[hashId(building.id) % family.walls.length], ...landmarkAppearance(building) };
 }
 
-export const LAND_COLORS = Object.freeze({ ground: 0x7ba05f, grass: 0x76a35f, garden: 0x59964e, park: 0x6ca374,
-  forest: 0x447953, orchard: 0x779751, pitch: 0x98b873, water: 0x527759 });
+export const LAND_COLORS = Object.freeze({ ground: 0x628749, grass: 0x5d8848, garden: 0x59964e, park: 0x6ca374,
+  forest: 0x447953, orchard: 0x779751, pitch: 0x98b873, water: 0x2a5c53 });

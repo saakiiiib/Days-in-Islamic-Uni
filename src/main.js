@@ -1,17 +1,20 @@
 import { landing } from './landing.js';
 import * as THREE from 'three';
 import { loadMap } from './map/index.js';
-import { buildWorld } from './world/index.js';
+import { buildWorld, bridgeHeightAt } from './world/index.js';
 import { InputController } from './player/index.js';
 import { HUD } from './ui/hud.js';
 import { InspectionCamera, InspectionSession } from './player/inspection.js';
 import { PlaceLabels } from './ui/labels.js';
 import { mountPlaceSearch } from './ui/placeSearch.js';
 import './ui/placeSearch.css';
-import { campusLighting } from './world/solarLighting.js';
+import { campusTimeOfDayLighting } from './world/solarLighting.js';
+import { createCampusAtmosphere } from './world/atmosphere.js';
 import { CampusSimulation } from './game/simulation.js';
 import { TravelCamera } from './vehicle/camera.js';
 import { ReactionAudio } from './audio/reactions.js';
+import { CampusAmbientAudio } from './audio/ambient.js';
+import { buildActivityHubs } from './activity/hubs.js';
 import { TouchControls } from './player/touch.js';
 import { deviceProfile, renderPixelRatio } from './platform/device.js';
 import { createWorldAssetPipeline } from './world/assets.js';
@@ -27,21 +30,28 @@ const device = deviceProfile(window);
 document.body.classList.toggle('touch-device', device.touch);
 $('touch-instructions').hidden = !device.touch;
 let state = 'loading', renderer, scene, camera, world, mapData, player, input, chase, hud, sun;
-let inspection, inspectionSession, labels, gameplayFog, hemisphere;
+let inspection, inspectionSession, labels, gameplayFog, hemisphere, atmosphere;
 let placeSearch, placeSearchOpen = false;
 let simulation;
-let reactions;
+let reactions, ambient, campusHubs = [];
 let touch, shadowElapsed = Infinity;
 let visibility;
-let gateCamera, gateFrameDirty = true;
+let gateCamera, gateFrameDirty = true, liveLandingPreview = false;
 const handoff = new CameraHandoff();
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 let assetPipeline, startupStage = 'map', latestAssetProgress;
 let accumulator = 0, lastTime = performance.now(), fps = 60;
 const STEP = 1 / 60;
 const sunOffset = new THREE.Vector3();
-const LIGHTING_DATES = { march:'2026-03-20T06:05:00.000Z', june:'2026-06-21T06:05:00.000Z', december:'2026-12-21T06:05:00.000Z' };
-let lightingConfig = campusLighting();
+let lightingConfig = campusTimeOfDayLighting({ season: 'march', timeOfDay: 'golden', sky: 'clear' });
+
+const LANDMARK_SPAWNS = Object.freeze({
+  'main-gate': { ...MAIN_GATE_CONFIG.exteriorSpawn, label: 'Main Gate' },
+  'central-mosque': { x: -145.5, y: 0, z: -116.5, yaw: 2.987, pitch: 0.14, label: 'Central Mosque' },
+  'central-library': { x: -8.5, y: 0, z: -204.5, yaw: 1.843, pitch: 0.14, label: 'Central Library' },
+  'iu-lake': { x: -337.0, y: 0, z: -221.8, yaw: 1.422, pitch: 0.22, label: 'IU Lake' },
+});
+const selectedSpawn = () => LANDMARK_SPAWNS[landing.spawnLocation?.value] ?? LANDMARK_SPAWNS['main-gate'];
 
 const paint = () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
 function progress(message, counts) { landing.progress(message, counts); }
@@ -77,6 +87,7 @@ function pause(reason = 'escape') {
   handoff.cancel(); document.body.classList.remove('entering-campus');
   input.setEnabled(false); inspectionSession.suspend(); simulation.setSuspended(true);
   reactions?.setSuspended(true);
+  ambient?.setSuspended(true);
   if (document.pointerLockElement === canvas) document.exitPointerLock();
   $('pause-reason').textContent = reason === 'focus' ? 'The game paused while you stepped away.' : 'Your campus is waiting.';
   $('pause-screen').hidden = false;
@@ -92,13 +103,31 @@ async function play() {
   inspectionSession.resume();
   simulation.setSuspended(inspectionSession.active);
   reactions?.setSuspended(inspectionSession.active);
-  if (!inspectionSession.active) reactions?.unlock();
+  ambient?.setSuspended(inspectionSession.active);
+  if (!inspectionSession.active) { reactions?.unlock(); ambient?.unlock(); }
   if (firstStart) {
     // Initialization already placed this unchanged campus. Rebuilding/resetting
     // its crowd a second time here adds a needless first-click stall.
-    chase.setDriving(false); chase.reset(MAIN_GATE_CONFIG.exteriorSpawn);
-    handoff.begin(gateCamera.fit(window.innerWidth / Math.max(1, window.innerHeight)), camera, { reducedMotion: reducedMotion.matches });
-    document.body.classList.toggle('entering-campus', handoff.active);
+    const spawn = selectedSpawn();
+    const atGate = (landing.spawnLocation?.value ?? 'main-gate') === 'main-gate';
+    if (!atGate) {
+      player.teleport(spawn, spawn.yaw);
+      sun.target.position.set(spawn.x, 0, spawn.z);
+      sun.position.copy(sun.target.position).add(sunOffset);
+      sun.shadow.needsUpdate = true;
+    }
+    chase.setDriving(false); chase.reset(spawn);
+    if (Number.isFinite(spawn.pitch)) {
+      chase.pitch = spawn.pitch;
+      chase.update(0, player.position, { dx: 0, dy: 0 });
+    }
+    if (atGate) {
+      handoff.begin(gateCamera.fit(window.innerWidth / Math.max(1, window.innerHeight)), camera, { reducedMotion: reducedMotion.matches });
+      document.body.classList.toggle('entering-campus', handoff.active);
+    } else {
+      handoff.cancel();
+      document.body.classList.remove('entering-campus');
+    }
   }
   const landingElement = $('landing'); if (landingElement) landingElement.hidden = true;
   $('start-screen').hidden = true; $('pause-screen').hidden = true; $('play-hud').hidden = false;
@@ -111,9 +140,13 @@ async function play() {
   $('announcer').textContent = device.touch ? 'Use the left stick to move, swipe the right side to look, and approach a van to tap Enter.' : 'Explore campus. WASD moves, Shift sprints, Space jumps. Walk through the Main Gate and drive the IU Red Bus or vans.';
   if (inspectionSession.active) { syncView(); return; }
   const locked = await input.requestPointerLock();
+  const spawnInfo = selectedSpawn();
+  const firstMsg = (landing.spawnLocation?.value ?? 'main-gate') === 'main-gate'
+    ? 'Walk through the Main Gate into campus. The iconic IU Red Bus is parked ahead!'
+    : `Welcome to ${spawnInfo.label} · Days in Islamic Uni.`;
   if (device.touch && state === 'playing') hud.toast(firstStart ? 'Left stick: move · Swipe right: look · Approach the van and tap Enter.' : 'Touch controls ready.', 5000);
   else if (!locked && state === 'playing') hud.toast(firstStart ? 'WASD to move. Move your mouse over the game to look. Approach a van and press E.' : 'Move your mouse over the game to look. Click the game to capture the pointer when supported.', 6500);
-  else if (firstStart) hud.toast('Walk through the Main Gate into campus. The iconic IU Red Bus is parked ahead!', 5500);
+  else if (firstStart) hud.toast(firstMsg, 5500);
 }
 function resetPlayer() {
   handoff.cancel(); document.body.classList.remove('entering-campus');
@@ -130,7 +163,8 @@ function syncView() {
   scene.fog = active ? null : gameplayFog;
   simulation.setSuspended(active);
   reactions?.setSuspended(active);
-  if (!active && state === 'playing') reactions?.unlock();
+  ambient?.setSuspended(active);
+  if (!active && state === 'playing') { reactions?.unlock(); ambient?.unlock(); }
   document.body.classList.toggle('inspecting', active);
   $('inspection-button').setAttribute('aria-pressed', String(active));
   $('inspection-button').querySelector('span').textContent = active ? simulation.session.driving ? 'Back to van' : 'Back to student' : 'Inspect campus';
@@ -178,33 +212,57 @@ function toggleAlignment() {
 }
 
 function lighting() {
+  atmosphere = createCampusAtmosphere(renderer, scene);
   hemisphere = new THREE.HemisphereLight(); scene.add(hemisphere);
   sun = new THREE.DirectionalLight();
   sun.castShadow = true;
   sun.shadow.mapSize.set(device.shadowSize, device.shadowSize);
   const extent = device.shadowExtent;
-  Object.assign(sun.shadow.camera, { left: -extent, right: extent, top: extent, bottom: -extent, near: 1, far: 210 });
-  sun.shadow.bias = -.00015; sun.shadow.normalBias = .035;
-  sun.shadow.intensity = .72;
+  Object.assign(sun.shadow.camera, { left: -extent, right: extent, top: extent, bottom: -extent, near: 1, far: 360 });
+  sun.shadow.bias = -.00018; sun.shadow.normalBias = .035;
+  sun.shadow.intensity = .76;
   scene.add(sun, sun.target);
   sun.position.copy(player.position).add(sunOffset); sun.target.position.copy(player.position);
   applyLighting();
 }
 function applyLighting() {
   if (!sun || !hemisphere) return;
-  lightingConfig = campusLighting({ date:LIGHTING_DATES[$('lighting-season').value], preset:$('lighting-sky').value });
+  const season = $('lighting-season')?.value || 'march';
+  const timeOfDay = landing.timeOfDay?.value || $('lighting-time')?.value || 'golden';
+  const sky = $('lighting-sky')?.value || 'clear';
+  lightingConfig = campusTimeOfDayLighting({ season, timeOfDay, sky });
   const config = lightingConfig;
   scene.background.setHex(config.skyColor);
   gameplayFog.color.setHex(config.fog.color); gameplayFog.near = config.fog.near; gameplayFog.far = config.fog.far;
   sun.color.setHex(config.sun.color); sun.intensity = config.sun.intensity;
   hemisphere.color.setHex(config.hemisphere.skyColor); hemisphere.groundColor.setHex(config.hemisphere.groundColor); hemisphere.intensity = config.hemisphere.intensity;
-  sunOffset.set(config.sunOffset.x,config.sunOffset.y,config.sunOffset.z);
+  sunOffset.set(config.sunOffset.x, config.sunOffset.y, config.sunOffset.z);
   sun.position.copy(sun.target.position).add(sunOffset);
+  atmosphere?.apply(config);
+  const emissiveBoost = config.emissiveBoost ?? 0;
+  if (world?.materials?.windows) {
+    world.materials.windows.emissive?.setHex(0xffc978);
+    world.materials.windows.emissiveIntensity = emissiveBoost * 0.28;
+  }
+  const gateGroup = world?.mainGate?.group;
+  if (gateGroup) {
+    const uplights = gateGroup.getObjectByName('warm-uplights');
+    if (uplights?.material) uplights.material.emissiveIntensity = 1.05 + emissiveBoost * 1.45;
+    const kalima = gateGroup.getObjectByName('rooftop-kalima-calligraphy');
+    if (kalima?.material) kalima.material.emissiveIntensity = 0.2 + emissiveBoost * 0.65;
+    for (const lightName of ['gate-arch-light-left', 'gate-arch-light-right']) {
+      const archLight = gateGroup.getObjectByName(lightName);
+      if (archLight) archLight.intensity = 0.6 + emissiveBoost * 6.2;
+    }
+    const pavilionLight = gateGroup.getObjectByName('gate-pavilion-light');
+    if (pavilionLight) pavilionLight.intensity = 0.5 + emissiveBoost * 5.0;
+  }
   sun.shadow.needsUpdate = true; renderer.shadowMap.needsUpdate = true; gateFrameDirty = true;
   canvas.dataset.solarAltitude = config.solar.altitude.toFixed(3);
   canvas.dataset.solarAzimuth = config.solar.azimuth.toFixed(3);
   canvas.dataset.lightingDate = config.solar.date;
   canvas.dataset.skyPreset = config.preset;
+  canvas.dataset.timeOfDay = config.timeOfDay;
 }
 function tick(t) {
   const elapsed = Math.max(0, Math.min((t - lastTime) / 1000, .1)); lastTime = t;
@@ -242,6 +300,25 @@ function tick(t) {
     }
     reactions.consume(simEvents, simulation.entity.position, chase.yaw);
     reactions.update(elapsed, simulation.entity.position, chase.yaw, simulation.crowd.agents);
+    if (ambient) {
+      const entity = simulation.entity;
+      const ex = entity.position.x, ez = entity.position.z;
+      const onBridge = bridgeHeightAt(ex, ez, mapData.bridges ?? []) !== null;
+      const surface = onBridge ? 'bridge' : simulation.queries.onRoad(ex, ez) ? 'asphalt' : 'grass';
+      const nearWater = simulation.queries.water.near({ minX: ex - 42, maxX: ex + 42, minZ: ez - 42, maxZ: ez + 42 }).length > 0;
+      const nearHub = campusHubs.some(hub => Math.hypot(ex - hub.x, ez - hub.z) < 70);
+      ambient.update(elapsed, {
+        position: entity.position,
+        speed: entity.speed,
+        grounded: entity.grounded,
+        driving: simulation.session.driving,
+        isBus: Boolean(simulation.session.driving && simulation.session.van?.isBus),
+        nearWater,
+        nearHub,
+        surface,
+        timeOfDay: lightingConfig.timeOfDay,
+      });
+    }
     for (const agent of simulation.crowd.agents) {
       agent.voicePlaying = String(agent.id) === reactions.active?.npcId;
       if (agent.voicePlaying) agent.lastVoiceAt = simulation.crowd.time;
@@ -266,11 +343,11 @@ function tick(t) {
     hud.update(elapsed, simulation.entity, renderer, fps, { inspection: true, simulation, visibility: visibility.sample(elapsed, simulation, simulation.entity.position) });
   }
   if (renderer && scene && camera) {
-    // The normal landing uses its immediate poster. A requested expanded
-    // in-game preview draws once, using the existing renderer, after readiness.
-    // No duplicate renderer or continuous hidden campus rendering while waiting.
+    // The normal landing uses its immediate poster until ready; expanding the gate
+    // or switching Atmosphere time-of-day draws the live 3D Main Gate scene cleanly.
     if (state === 'ready') {
-      if ($('landing').classList.contains('gate-expanded') && gateFrameDirty && !document.hidden) renderGatePreview();
+      const wantsLive = $('landing').classList.contains('gate-expanded') || liveLandingPreview;
+      if (wantsLive && gateFrameDirty && !document.hidden) renderGatePreview();
       requestAnimationFrame(tick); return;
     }
     if (device.touch) {
@@ -279,6 +356,8 @@ function tick(t) {
     }
     const activeCamera = inspectionSession.active ? inspection.camera : handoff.update(elapsed, camera);
     if (!handoff.active) document.body.classList.remove('entering-campus');
+    atmosphere?.update(elapsed);
+    atmosphere?.follow(activeCamera.position);
     renderer.setScissorTest(false); renderer.setViewport(0, 0, window.innerWidth, window.innerHeight);
     renderer.render(scene, activeCamera);
     labels.update(elapsed, activeCamera, simulation.entity.position, { inspection: inspectionSession.active, visible: !handoff.active && ['playing', 'inspection'].includes(state), width: window.innerWidth, height: window.innerHeight });
@@ -290,6 +369,11 @@ function renderGatePreview() {
   const rect = $('landing-scene').getBoundingClientRect();
   if (!rect.width || !rect.height) return;
   gateCamera.fit(rect.width / rect.height);
+  sun.target.position.set(MAIN_GATE_CONFIG.position.x, 0, MAIN_GATE_CONFIG.position.z);
+  sun.position.copy(sun.target.position).add(sunOffset);
+  sun.shadow.needsUpdate = true;
+  renderer.shadowMap.needsUpdate = true;
+  atmosphere?.follow(gateCamera.camera.position);
   renderer.setViewport(rect.left, window.innerHeight - rect.bottom, rect.width, rect.height);
   renderer.setScissor(rect.left, window.innerHeight - rect.bottom, rect.width, rect.height);
   renderer.setScissorTest(true);
@@ -329,14 +413,15 @@ async function initialize() {
     visibility = new CampusVisibility([player.world, player.sceneryWorld]);
     renderer = new THREE.WebGLRenderer({ canvas, antialias: device.antialias, powerPreference: 'high-performance' });
     renderer.outputColorSpace = THREE.SRGBColorSpace;
-    renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.0;
-    renderer.shadowMap.enabled = true; renderer.shadowMap.type = device.touch ? THREE.BasicShadowMap : THREE.PCFShadowMap;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.04;
+    renderer.shadowMap.enabled = true; renderer.shadowMap.type = device.touch ? THREE.BasicShadowMap : THREE.PCFSoftShadowMap;
     renderer.shadowMap.autoUpdate = !device.touch; renderer.shadowMap.needsUpdate = true;
     scene = new THREE.Scene(); scene.background = new THREE.Color(lightingConfig.skyColor);
     gameplayFog = new THREE.Fog(lightingConfig.fog.color, lightingConfig.fog.near, lightingConfig.fog.far); scene.fog = gameplayFog;
     scene.add(world.group, player.group, simulation.fleetGroup, simulation.busGroup, simulation.ambulanceGroup, simulation.occupants.group, simulation.crowd.group, simulation.sideCharactersGroup);
-    camera = new THREE.PerspectiveCamera(60, 1, .08, 2200);
+    camera = new THREE.PerspectiveCamera(60, 1, .08, 3500);
     gateCamera = new GateMenuCamera();
+    gateCamera.camera.far = 3500; gateCamera.camera.updateProjectionMatrix();
     const cameraColliders = new THREE.Group();
     cameraColliders.add(world.collisionGroup);
     if (world.scenery?.collisionGroup) cameraColliders.add(world.scenery.collisionGroup);
@@ -349,7 +434,7 @@ async function initialize() {
     } });
     if (device.touch) {
       touch = new TouchControls({ root: $('touch-controls'), canvas, onPause: pause, allowMouse: device.preview,
-        onGesture: () => { if (!reactions?.unlocked) reactions?.unlock(); } });
+        onGesture: () => { if (!reactions?.unlocked) reactions?.unlock(); if (!ambient?.unlocked) ambient?.unlock(); } });
       input.setTouchControls(touch);
     }
     inspection = new InspectionCamera(new THREE.PerspectiveCamera(52, 1, .5, 3500), mapData.bounds);
@@ -377,15 +462,21 @@ async function initialize() {
     if (device.touch) {
       for (const [id, title] of [['labels-button', 'Names'], ['inspection-button', 'View'], ['alignment-button', 'Map'], ['sound-button', 'Sound']]) $(id).querySelector('kbd').textContent = title;
     }
+    campusHubs = buildActivityHubs(mapData);
     reactions = new ReactionAudio({ baseURL: `${import.meta.env.BASE_URL}audio/`, onStatus: status => {
       $('sound-button').setAttribute('aria-pressed', String(status.muted));
       $('sound-label').textContent = status.muted ? 'Sound off' : 'Sound on';
-      $('sound-status').textContent = status.mode === 'recorded-clips' ? 'Recorded voices' : 'Voice unavailable';
+      $('sound-status').textContent = status.mode === 'recorded-clips' ? 'Campus audio & voices' : 'Campus ambience';
     } });
+    ambient = new CampusAmbientAudio();
+    ambient.setSuspended(true);
     try {
       const preferences = JSON.parse(localStorage.getItem('iu-reaction-audio') ?? '{}');
-      reactions.setVolume(Number.isFinite(preferences.volume) ? preferences.volume : .55); reactions.setMuted(preferences.muted === true);
-    } catch { reactions.setVolume(.55); }
+      const savedVol = Number.isFinite(preferences.volume) ? preferences.volume : .55;
+      const savedMuted = preferences.muted === true;
+      reactions.setVolume(savedVol); reactions.setMuted(savedMuted);
+      ambient.setVolume(savedVol); ambient.setMuted(savedMuted);
+    } catch { reactions.setVolume(.55); ambient.setVolume(.55); }
     $('sound-volume').value = Math.round(reactions.volume * 100);
     // Prepare exactly the third-person view used by the first gameplay frame.
     chase.reset(MAIN_GATE_CONFIG.exteriorSpawn);
@@ -470,13 +561,33 @@ $('reset-button').addEventListener('click', () => { resetPlayer(); play(); });
 $('inspection-button').addEventListener('click', toggleInspection);
 $('labels-button').addEventListener('click', toggleLabels);
 $('place-search-button').addEventListener('click', togglePlaceSearch);
+$('lighting-time')?.addEventListener('change', applyLighting);
 $('lighting-season').addEventListener('change', applyLighting);
 $('lighting-sky').addEventListener('change', applyLighting);
+landing.timeOfDay?.subscribe(() => {
+  applyLighting();
+  if (state === 'ready') {
+    liveLandingPreview = true;
+    gateFrameDirty = true;
+  }
+});
 $('alignment-button').addEventListener('click', toggleAlignment);
 function saveAudioPreferences() { try { localStorage.setItem('iu-reaction-audio', JSON.stringify({ muted: reactions.muted, volume: reactions.volume })); } catch { /* Storage is optional. */ } }
-function toggleSound() { if (!reactions) return; reactions.setMuted(!reactions.muted); if (!reactions.muted) reactions.unlock(); saveAudioPreferences(); }
+function toggleSound() {
+  if (!reactions) return;
+  const muted = !reactions.muted;
+  reactions.setMuted(muted); ambient?.setMuted(muted);
+  if (!muted) { reactions.unlock(); ambient?.unlock(); }
+  saveAudioPreferences();
+}
 $('sound-button').addEventListener('click', toggleSound);
-$('sound-volume').addEventListener('input', event => { if (!reactions) return; reactions.setVolume(Number(event.target.value) / 100); reactions.unlock(); saveAudioPreferences(); });
+$('sound-volume').addEventListener('input', event => {
+  if (!reactions) return;
+  const vol = Number(event.target.value) / 100;
+  reactions.setVolume(vol); ambient?.setVolume(vol);
+  reactions.unlock(); ambient?.unlock();
+  saveAudioPreferences();
+});
 document.querySelector('.wordmark').addEventListener('click', event => { event.preventDefault(); pause(); });
 window.addEventListener('resize', resize);
 window.visualViewport?.addEventListener('resize', resize);

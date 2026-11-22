@@ -1,12 +1,14 @@
-/** Menu state exists before importing Three.js; loading cannot overwrite a choice. */
-export function createCharacterSelection() {
-  let value = 'hujur';
+export const TIME_OF_DAY_OPTIONS = ['morning', 'midday', 'golden', 'dusk'];
+export const SPAWN_LOCATIONS = ['main-gate', 'central-mosque', 'central-library', 'iu-lake'];
+
+function createChoiceStore(validValues, defaultValue) {
+  let value = defaultValue;
   const listeners = new Set();
   return {
     get value() { return value; },
-    select(type) {
-      if (!['hujur', 'niqab'].includes(type) || type === value) return false;
-      value = type;
+    select(next) {
+      if (!validValues.includes(next) || next === value) return false;
+      value = next;
       for (const listener of listeners) listener(value);
       return true;
     },
@@ -14,9 +16,29 @@ export function createCharacterSelection() {
   };
 }
 
+/** Menu state exists before importing Three.js; loading cannot overwrite a choice. */
+export function createCharacterSelection() {
+  return createChoiceStore(['hujur', 'niqab'], 'hujur');
+}
+
+export function createTimeOfDaySelection() {
+  return createChoiceStore(TIME_OF_DAY_OPTIONS, 'golden');
+}
+
+export function createSpawnSelection() {
+  return createChoiceStore(SPAWN_LOCATIONS, 'main-gate');
+}
+
 export function createLanding(doc, { reload = () => doc.defaultView.location.reload() } = {}) {
   const $ = id => doc.getElementById(id);
+  const queryButtons = (containerId, selector) => {
+    const container = $(containerId);
+    if (container?.querySelectorAll) return container.querySelectorAll(selector);
+    return doc.querySelectorAll?.(selector) ?? [];
+  };
   const selection = createCharacterSelection();
+  const timeOfDay = createTimeOfDaySelection();
+  const spawnLocation = createSpawnSelection();
   let ready = false;
   const gateButton = $('mainGateView'), landingElement = $('landing');
   const expandGate = expanded => {
@@ -34,11 +56,40 @@ export function createLanding(doc, { reload = () => doc.defaultView.location.rel
     }
     if ($('selectionNumber')) $('selectionNumber').textContent = selection.value === 'hujur' ? '01 / 02' : '02 / 02';
   };
+  const refreshTimeOfDay = () => {
+    for (const pill of queryButtons('landingTimeOfDay', '[data-time]')) {
+      const selected = pill.dataset.time === timeOfDay.value;
+      pill.classList.toggle('active', selected);
+      pill.setAttribute('aria-pressed', String(selected));
+    }
+    const lightingTime = $('lighting-time');
+    if (lightingTime) lightingTime.value = timeOfDay.value;
+  };
+  const refreshSpawnLocation = () => {
+    for (const pill of queryButtons('landingSpawn', '[data-spawn]')) {
+      const selected = pill.dataset.spawn === spawnLocation.value;
+      pill.classList.toggle('active', selected);
+      pill.setAttribute('aria-pressed', String(selected));
+    }
+  };
   for (const pill of doc.querySelectorAll('.char-pill:not([hidden])')) {
     pill.addEventListener('click', () => selection.select(pill.dataset.char));
   }
+  for (const pill of queryButtons('landingTimeOfDay', '[data-time]')) {
+    pill.addEventListener('click', () => timeOfDay.select(pill.dataset.time));
+  }
+  for (const pill of queryButtons('landingSpawn', '[data-spawn]')) {
+    pill.addEventListener('click', () => spawnLocation.select(pill.dataset.spawn));
+  }
+  $('lighting-time')?.addEventListener('change', event => {
+    timeOfDay.select(event.target?.value ?? $('lighting-time')?.value);
+  });
   selection.subscribe(refreshSelection);
+  timeOfDay.subscribe(refreshTimeOfDay);
+  spawnLocation.subscribe(refreshSpawnLocation);
   refreshSelection();
+  refreshTimeOfDay();
+  refreshSpawnLocation();
   $('retry-loading')?.addEventListener('click', reload);
   const dialog = $('controlsDialog');
   $('controlsButton')?.addEventListener('click', () => dialog?.showModal());
@@ -52,6 +103,8 @@ export function createLanding(doc, { reload = () => doc.defaultView.location.rel
   });
   return {
     selection,
+    timeOfDay,
+    spawnLocation,
     get ready() { return ready; },
     setReady(value) {
       ready = Boolean(value);

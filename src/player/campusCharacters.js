@@ -1,11 +1,12 @@
 /**
- * Campus Story: Islamic University | Procedural Campus Characters
+ * Days in Islamic Uni | Procedural Campus Characters
  * Three.js ES module.
  *
  * Provides:
- * - createHujurCharacter: Islamic University scholar / Hujur with authentic thobe/robe,
+ * - createHujurCharacter: Islamic University scholar / Hujur with draped thobe/robe,
  *   patterned red houndstooth keffiyeh/ghutrah with dual agal cords, trimmed beard, and sandals.
- * - createNiqabCharacter: Female student NPC with modest dark abaya, draped niqab veil, and eye band.
+ * - createNiqabCharacter: Female student with draped modest abaya, curved niqab veil,
+ *   contoured eye opening, and layered shoulder khimar shawl.
  * - animateCharacterWalk: Fluid joint and robe-bobbing walking/running animation gait.
  * - moveCampusNPCTo: Path navigation helper for campus side characters.
  */
@@ -56,6 +57,10 @@ function cylinder(parent, mat, top, bottom, length, segments, pos) {
   return mesh(sharedGeometry(`cylinder:${top}:${bottom}:${length}:${segments}`, () => new THREE.CylinderGeometry(top, bottom, length, segments)), mat, parent, ...pos);
 }
 
+function torus(parent, mat, radius, tube, radialSegs, tubularSegs, pos) {
+  return mesh(sharedGeometry(`torus:${radius}:${tube}:${radialSegs}:${tubularSegs}`, () => new THREE.TorusGeometry(radius, tube, radialSegs, tubularSegs)), mat, parent, ...pos);
+}
+
 function roundLine(parent, mat, from, to, radius = 0.01, segs = 7) {
   const A = new THREE.Vector3(...from);
   const B = new THREE.Vector3(...to);
@@ -66,19 +71,156 @@ function roundLine(parent, mat, from, to, radius = 0.01, segs = 7) {
   return line;
 }
 
-function addPanel(parent, material, coords, uvCoords) {
-  const geometry = new THREE.BufferGeometry();
-  const faces = [0, 1, 2, 0, 2, 3];
-  const positions = [];
-  const uv = [];
-  for (const idx of faces) {
-    positions.push(...coords[idx]);
-    uv.push(...uvCoords[idx]);
+/**
+ * Builds an owned LatheGeometry robe with gentle vertical cloth folds below the waist.
+ */
+function createDrapedRobeGeometry(profile, {
+  segments = 28,
+  folds = 6,
+  amplitude = 0.022,
+  yStart = 0.09,
+  yEnd = 1.02,
+} = {}) {
+  const points = profile.map(([r, y]) => new THREE.Vector2(r, y));
+  const geometry = new THREE.LatheGeometry(points, segments);
+  const pos = geometry.attributes.position;
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i);
+    const y = pos.getY(i);
+    const z = pos.getZ(i);
+    const r = Math.hypot(x, z);
+    if (r > 0.08 && y >= yStart && y <= yEnd) {
+      const t = 1 - (y - yStart) / Math.max(0.001, yEnd - yStart);
+      const weight = Math.sin(Math.min(1, t) * PI * 0.86);
+      const angle = Math.atan2(z, x);
+      const wave = 1 + amplitude * weight * (0.76 * Math.sin(angle * folds) + 0.24 * Math.cos(angle * (folds + 2) + 0.55));
+      pos.setX(i, x * wave);
+      pos.setZ(i, z * wave);
+    }
   }
+  pos.needsUpdate = true;
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
+/**
+ * Builds a multi-segment curved cloth surface (owned BufferGeometry) for natural scarf drapes.
+ */
+function addCurvedPanel(parent, material, corners, uvRange, {
+  uSegs = 6,
+  vSegs = 8,
+  curveOut = 0.035,
+  ripple = 0.01,
+} = {}) {
+  const [tl, tr, br, bl] = corners;
+  const [u0, v0, u1, v1] = uvRange;
+  const positions = [];
+  const uvs = [];
+  const indices = [];
+
+  for (let iv = 0; iv <= vSegs; iv++) {
+    const tv = iv / vSegs;
+    for (let iu = 0; iu <= uSegs; iu++) {
+      const tu = iu / uSegs;
+      const topX = tl[0] + (tr[0] - tl[0]) * tu;
+      const topY = tl[1] + (tr[1] - tl[1]) * tu;
+      const topZ = tl[2] + (tr[2] - tl[2]) * tu;
+      const botX = bl[0] + (br[0] - bl[0]) * tu;
+      const botY = bl[1] + (br[1] - bl[1]) * tu;
+      const botZ = bl[2] + (br[2] - bl[2]) * tu;
+
+      const arch = Math.sin(tu * PI) * Math.sin(tv * PI * 0.9) * curveOut;
+      const fold = Math.sin(tu * PI * 2.5) * tv * ripple;
+      const x = topX + (botX - topX) * tv;
+      const y = topY + (botY - topY) * tv;
+      const z = topZ + (botZ - topZ) * tv + arch + fold;
+
+      positions.push(x, y, z);
+      uvs.push(u0 + (u1 - u0) * tu, v0 + (v1 - v0) * tv);
+    }
+  }
+
+  const stride = uSegs + 1;
+  for (let iv = 0; iv < vSegs; iv++) {
+    for (let iu = 0; iu < uSegs; iu++) {
+      const a = iv * stride + iu;
+      const b = a + 1;
+      const c = a + stride + 1;
+      const d = a + stride;
+      indices.push(a, b, c, a, c, d);
+    }
+  }
+
+  const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-  geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  geometry.setIndex(indices);
   geometry.computeVertexNormals();
   return mesh(geometry, material, parent);
+}
+
+/**
+ * Builds a gracefully curved partial-cylinder cloth drape with soft folds and tapered edges.
+ */
+function createCurvedArcDrape(parent, material, {
+  radiusTop,
+  radiusBottom,
+  height,
+  radialSegments = 20,
+  heightSegments = 8,
+  thetaStart,
+  thetaLength,
+  pos = [0, 0, 0],
+  topCurve = 0,
+  bottomCurve = 0,
+  bulge = 0,
+  foldCount = 3,
+  foldAmp = 0.012,
+  taperBottomX = 1,
+}) {
+  const geometry = new THREE.CylinderGeometry(
+    radiusTop,
+    radiusBottom,
+    height,
+    radialSegments,
+    heightSegments,
+    true,
+    thetaStart,
+    thetaLength,
+  );
+  const posAttr = geometry.attributes.position;
+  const halfH = height * 0.5;
+  const centerTheta = thetaStart + thetaLength * 0.5;
+
+  for (let i = 0; i < posAttr.count; i++) {
+    let x = posAttr.getX(i);
+    let y = posAttr.getY(i);
+    let z = posAttr.getZ(i);
+    const r = Math.hypot(x, z);
+    const v = (halfH - y) / Math.max(0.001, height); // 0 at top, 1 at bottom
+    const theta = Math.atan2(x, z);
+    let dTheta = theta - centerTheta;
+    while (dTheta > PI) dTheta -= 2 * PI;
+    while (dTheta < -PI) dTheta += 2 * PI;
+    const uNorm = Math.max(-1, Math.min(1, dTheta / Math.max(0.001, thetaLength * 0.5)));
+    const centerWeight = Math.cos(uNorm * PI * 0.5);
+
+    // Sculpt top bridge contour & soft curved lower hem
+    y += topCurve * (1 - v) * centerWeight;
+    y -= bottomCurve * v * centerWeight;
+
+    // Convex shoulder drape curve + gentle fabric ripples growing toward bottom edge
+    const convex = bulge * Math.sin(v * PI);
+    const fold = foldAmp * v * v * Math.cos(uNorm * PI * foldCount);
+    const radialScale = r > 0.001 ? (r + convex + fold) / r : 1;
+    x *= radialScale * (1 - (1 - taperBottomX) * v);
+    z *= radialScale;
+
+    posAttr.setXYZ(i, x, y, z);
+  }
+  posAttr.needsUpdate = true;
+  geometry.computeVertexNormals();
+  return mesh(geometry, material, parent, ...pos);
 }
 
 /**
@@ -147,7 +289,7 @@ function makeMaterials(type, opt) {
   const tex = patternedScarf(opt.scarfColor);
   const m = {
     robe: standard(opt.robeColor),
-    robeTrim: standard(0xd4d1c8),
+    robeTrim: standard(0xd4cfbf, 0.78),
     skin: standard(opt.skinColor, 0.92),
     eyes: standard(0x282321),
     eyeWhite: standard(0xefeadc),
@@ -197,33 +339,84 @@ export function disposeCampusCharacter(group) {
 }
 
 function createRobe(body, m) {
+  // Smooth waist-to-hem draped panjabi/thobe curve with rounded shoulder yoke
   const profile = [
-    [0.0, 0.085], [0.45, 0.085], [0.53, 0.12], [0.52, 0.24],
-    [0.50, 0.36], [0.46, 0.63], [0.39, 1.05], [0.37, 1.30],
-    [0.33, 1.39], [0, 1.39],
-  ].map(([r, y]) => new THREE.Vector2(r, y));
-  const robe = mesh(new THREE.LatheGeometry(profile, 24), m.robe, body);
+    [0.0, 0.085],
+    [0.44, 0.085],
+    [0.52, 0.11],
+    [0.515, 0.22],
+    [0.495, 0.38],
+    [0.465, 0.58],
+    [0.425, 0.78],
+    [0.39, 0.96],
+    [0.378, 1.12],
+    [0.375, 1.26],
+    [0.355, 1.335],
+    [0.31, 1.385],
+    [0.23, 1.415],
+    [0.16, 1.422],
+    [0.0, 1.422],
+  ];
+  const robe = mesh(createDrapedRobeGeometry(profile, { segments: 28, folds: 6, amplitude: 0.022, yStart: 0.095, yEnd: 1.0 }), m.robe, body);
 
-  // Sewn center placket down the front (+Z), plus a collar and buttons
-  roundLine(body, m.robeTrim, [0, 1.38, 0.34], [0, 0.91, 0.40], 0.006);
-  for (const [y, z] of [[1.29, 0.365], [1.16, 0.39], [1.03, 0.405]]) {
-    ellipsoid(body, m.shadow, [0.012, 0.012, 0.006], [0, y, z], 8);
+  // Sewn center placket hugging the chest & yoke exterior (+Z), plus collar trim and buttons
+  roundLine(body, m.robeTrim, [0, 1.412, 0.242], [0, 1.335, 0.362], 0.0075);
+  roundLine(body, m.robeTrim, [0, 1.335, 0.362], [0, 0.90, 0.408], 0.008);
+  roundLine(body, m.robeTrim, [-0.028, 1.33, 0.360], [-0.028, 0.91, 0.404], 0.0045);
+  roundLine(body, m.robeTrim, [0.028, 1.33, 0.360], [0.028, 0.91, 0.404], 0.0045);
+  for (const [y, z] of [[1.32, 0.368], [1.21, 0.384], [1.10, 0.388], [0.99, 0.398]]) {
+    ellipsoid(body, m.shadow, [0.011, 0.011, 0.006], [0, y, z], 8);
   }
-  const neck = cylinder(body, m.skin, 0.145, 0.15, 0.18, 12, [0, 1.45, 0]);
+
+  const neck = cylinder(body, m.skin, 0.14, 0.148, 0.18, 14, [0, 1.47, 0]);
   neck.castShadow = false;
-  const collar = mesh(new THREE.TorusGeometry(0.18, 0.035, 6, 20), m.robe, body, 0, 1.42, 0);
-  collar.rotation.x = PI / 2;
+
+  // Standing band collar with crisp trim edge
+  cylinder(body, m.robe, 0.168, 0.188, 0.082, 22, [0, 1.436, 0]);
+  const collarBase = torus(body, m.robe, 0.188, 0.024, 8, 22, [0, 1.404, 0]);
+  collarBase.rotation.x = PI / 2;
+  const collarTrim = torus(body, m.robeTrim, 0.171, 0.013, 8, 22, [0, 1.474, 0]);
+  collarTrim.rotation.x = PI / 2;
+
   return robe;
 }
 
-function makeSleeve(parent, material, skin, sign, long = true) {
+function makeSleeve(parent, material, skin, sign, config = {}) {
+  const opts = typeof config === 'boolean' ? { long: config } : config;
+  const long = opts.long ?? true;
+  const shoulderX = opts.shoulderX ?? 0.355;
+  const shoulderY = opts.shoulderY ?? 1.255;
+  const cuffMat = opts.cuffMat ?? material;
+
   const shoulder = new THREE.Group();
-  shoulder.position.set(sign * 0.405, 1.32, 0);
+  shoulder.position.set(sign * shoulderX, shoulderY, 0);
   parent.add(shoulder);
 
-  const sleeve = cylinder(shoulder, material, 0.22, 0.155, long ? 0.69 : 0.56, 12, [sign * 0.14, -0.31, 0]);
-  sleeve.rotation.z = sign * 0.24;
-  ellipsoid(shoulder, skin, [0.115, 0.14, 0.105], [sign * 0.225, long ? -0.68 : -0.59, 0.005], 12);
+  // Rounded shoulder cap blends upper arm organically into the torso yoke
+  ellipsoid(shoulder, material, [0.158, 0.135, 0.152], [sign * 0.012, -0.01, 0], 14);
+
+  // Upper sleeve gently angled outward
+  const upper = cylinder(shoulder, material, 0.152, 0.124, 0.31, 14, [sign * 0.062, -0.16, 0]);
+  upper.rotation.z = sign * 0.18;
+
+  // Soft rounded elbow joint avoids a harsh straight pipe silhouette
+  ellipsoid(shoulder, material, [0.122, 0.102, 0.122], [sign * 0.092, -0.305, 0.006], 12);
+
+  // Tapered forearm sleeve with subtle natural forward pitch
+  const forearmLen = long ? 0.32 : 0.23;
+  const forearmY = long ? -0.455 : -0.41;
+  const forearm = cylinder(shoulder, material, 0.12, 0.092, forearmLen, 14, [sign * 0.118, forearmY, 0.024]);
+  forearm.rotation.z = sign * 0.10;
+  forearm.rotation.x = -0.10;
+
+  // Finished sleeve cuff rim
+  const cuffY = long ? -0.598 : -0.51;
+  const cuff = cylinder(shoulder, cuffMat, 0.096, 0.094, 0.038, 14, [sign * 0.132, cuffY, 0.038]);
+  cuff.rotation.z = sign * 0.10;
+  cuff.rotation.x = -0.10;
+
+  // Sculpted hand emerging neatly past the cuff
+  ellipsoid(shoulder, skin, [0.08, 0.106, 0.07], [sign * 0.142, long ? -0.655 : -0.56, 0.046], 12);
   return shoulder;
 }
 
@@ -263,29 +456,32 @@ function createFace(headGroup, mats) {
 }
 
 function createScarf(headGroup, mats) {
-  // Top head wrap + draped cloth panels
+  // Top head wrap + softly curved draped cloth panels
   const cap = mesh(new THREE.SphereGeometry(0.298, 24, 14, 0, 2 * PI, 0, PI * 0.53), mats.scarf, headGroup, 0, 0.20, -0.025);
   cap.scale.set(1.14, 0.86, 1.12);
 
   for (const sign of [-1, 1]) {
-    addPanel(headGroup, mats.scarf,
-      [[sign * 0.235, 0.22, -0.09], [sign * 0.33, 0.16, -0.18],
-       [sign * 0.44, -0.66, -0.21], [sign * 0.25, -0.70, 0.07]],
-      [[0, 0], [1, 0], [1, 1], [0, 1]]);
-    addPanel(headGroup, mats.scarf,
+    addCurvedPanel(headGroup, mats.scarf,
+      [[sign * 0.235, 0.22, -0.08], [sign * 0.33, 0.16, -0.18],
+       [sign * 0.43, -0.65, -0.20], [sign * 0.25, -0.69, 0.08]],
+      [0, 0, 1, 1],
+      { uSegs: 5, vSegs: 8, curveOut: 0.032, ripple: 0.01 });
+    addCurvedPanel(headGroup, mats.scarf,
       [[sign * 0.23, 0.13, -0.20], [sign * 0.31, 0.08, -0.26],
-       [sign * 0.30, -0.66, -0.28], [sign * 0.21, -0.53, -0.19]],
-      [[0, 0], [1, 0], [1, 1], [0, 1]]);
+       [sign * 0.30, -0.65, -0.28], [sign * 0.21, -0.53, -0.19]],
+      [0, 0, 1, 1],
+      { uSegs: 4, vSegs: 6, curveOut: -0.022, ripple: 0.008 });
   }
 
-  addPanel(headGroup, mats.scarf,
+  addCurvedPanel(headGroup, mats.scarf,
     [[-0.28, 0.16, -0.20], [0.28, 0.16, -0.20],
      [0.37, -0.77, -0.27], [-0.37, -0.77, -0.27]],
-    [[0, 0], [1, 0], [1, 1.7], [0, 1.7]]);
+    [0, 0, 1, 1.7],
+    { uSegs: 8, vSegs: 8, curveOut: -0.042, ripple: 0.012 });
 
   // Twin agal rings around the crown
   for (const height of [0.275, 0.317]) {
-    const ring = mesh(new THREE.TorusGeometry(0.285, 0.027, 7, 28), mats.agal, headGroup, 0, height, -0.025);
+    const ring = torus(headGroup, mats.agal, 0.285, 0.027, 7, 28, [0, height, -0.025]);
     ring.rotation.x = PI / 2;
     ring.scale.z = 0.91;
   }
@@ -338,9 +534,9 @@ export function createHujurCharacter(options = {}) {
 
   const body = new THREE.Group();
   group.add(body);
-  const robe = createRobe(body, mats);
-  const leftArm = makeSleeve(body, mats.robe, mats.skin, -1);
-  const rightArm = makeSleeve(body, mats.robe, mats.skin, 1);
+  createRobe(body, mats);
+  const leftArm = makeSleeve(body, mats.robe, mats.skin, -1, { cuffMat: mats.robeTrim });
+  const rightArm = makeSleeve(body, mats.robe, mats.skin, 1, { cuffMat: mats.robeTrim });
   const leftLeg = makeFeet(group, mats.shoes, mats.skin, -1);
   const rightLeg = makeFeet(group, mats.shoes, mats.skin, 1);
 
@@ -369,7 +565,7 @@ export function createNiqabCharacter(options = {}) {
     ...options,
   };
   const m = makeMaterials('niqab', opt);
-  const veil = standard(opt.scarfColor, 0.99, THREE.DoubleSide);
+  const veil = standard(opt.scarfColor, 0.96, THREE.DoubleSide);
   const root = new THREE.Group();
   root.name = 'Campus Story - Niqab Student';
   root.scale.setScalar(opt.scale);
@@ -377,14 +573,44 @@ export function createNiqabCharacter(options = {}) {
   const body = new THREE.Group();
   root.add(body);
 
+  // Flowing modest abaya with graceful A-line hem and subtle draped pleats
   const robeProfile = [
-    [0, 0.06], [0.49, 0.06], [0.50, 0.18], [0.43, 0.60],
-    [0.34, 1.23], [0.25, 1.44], [0, 1.44],
-  ].map(([r, y]) => new THREE.Vector2(r, y));
-  mesh(new THREE.LatheGeometry(robeProfile, 24), m.robe, body);
+    [0.0, 0.06],
+    [0.47, 0.06],
+    [0.525, 0.095],
+    [0.51, 0.22],
+    [0.48, 0.42],
+    [0.44, 0.64],
+    [0.40, 0.86],
+    [0.365, 1.06],
+    [0.352, 1.24],
+    [0.335, 1.33],
+    [0.285, 1.39],
+    [0.21, 1.43],
+    [0.145, 1.455],
+    [0.0, 1.455],
+  ];
+  mesh(createDrapedRobeGeometry(robeProfile, { segments: 28, folds: 7, amplitude: 0.026, yStart: 0.075, yEnd: 1.06 }), m.robe, body);
 
-  const armL = makeSleeve(body, m.robe, m.robe, -1);
-  const armR = makeSleeve(body, m.robe, m.robe, 1);
+  // Natural draped shoulder shawl / khimar mantle uniting shoulders and upper chest smoothly
+  createCurvedArcDrape(body, veil, {
+    radiusTop: 0.235,
+    radiusBottom: 0.398,
+    height: 0.38,
+    radialSegments: 24,
+    heightSegments: 6,
+    thetaStart: -PI,
+    thetaLength: PI * 2,
+    pos: [0, 1.28, 0],
+    topCurve: 0.01,
+    bottomCurve: 0.048,
+    bulge: 0.068,
+    foldCount: 5,
+    foldAmp: 0.012,
+  });
+
+  const armL = makeSleeve(body, m.robe, m.robe, -1, { shoulderX: 0.335, shoulderY: 1.265 });
+  const armR = makeSleeve(body, m.robe, m.robe, 1, { shoulderX: 0.335, shoulderY: 1.265 });
   const legL = makeFeet(root, m.shoes, m.shoes, -1, false);
   const legR = makeFeet(root, m.shoes, m.shoes, 1, false);
 
@@ -392,22 +618,70 @@ export function createNiqabCharacter(options = {}) {
   head.position.y = 1.66;
   body.add(head);
 
-  ellipsoid(head, veil, [0.295, 0.34, 0.285], [0, 0.065, 0], 18);
-  addPanel(head, veil,
-    [[-0.24, 0.10, 0.26], [0.24, 0.10, 0.26],
-     [0.24, -0.32, 0.29], [-0.24, -0.32, 0.29]],
-    [[0, 0], [1, 0], [1, 1], [0, 1]]);
+  // Sculpted hijab head wrap + soft layered crown fold
+  ellipsoid(head, veil, [0.282, 0.32, 0.282], [0, 0.072, -0.012], 20);
+  const crownFold = mesh(new THREE.SphereGeometry(0.292, 20, 12, 0, 2 * PI, 0, PI * 0.56), veil, head, 0, 0.115, -0.025);
+  crownFold.scale.set(1.03, 0.96, 1.04);
 
+  // Contoured recessed eye opening with natural skin curvature and expressive eyes
   const eyeBand = standard(opt.skinColor, 0.9);
-  ellipsoid(head, eyeBand, [0.22, 0.066, 0.024], [0, 0.108, 0.282], 14);
+  ellipsoid(head, eyeBand, [0.218, 0.112, 0.215], [0, 0.098, 0.068], 16);
   for (const s of [-1, 1]) {
-    ellipsoid(head, m.eyes, [0.032, 0.024, 0.014], [s * 0.105, 0.113, 0.309], 12);
+    ellipsoid(head, m.eyeWhite, [0.048, 0.022, 0.016], [s * 0.095, 0.106, 0.272], 12);
+    ellipsoid(head, m.eyes, [0.022, 0.022, 0.012], [s * 0.093, 0.106, 0.285], 12);
+    ellipsoid(head, m.beard, [0.055, 0.011, 0.014], [s * 0.096, 0.143, 0.267], 10);
   }
 
-  addPanel(head, veil,
-    [[-0.27, -0.14, -0.1], [0.27, -0.14, -0.1],
-     [0.36, -0.7, 0.13], [-0.36, -0.7, 0.13]],
-    [[0, 0], [1, 0], [1, 1], [0, 1]]);
+  // Soft curved forehead / brow wrap framing the top of the contoured eye opening
+  createCurvedArcDrape(head, veil, {
+    radiusTop: 0.272,
+    radiusBottom: 0.260,
+    height: 0.145,
+    radialSegments: 18,
+    heightSegments: 3,
+    thetaStart: -PI * 0.44,
+    thetaLength: PI * 0.88,
+    pos: [0, 0.228, 0.030],
+    topCurve: 0.01,
+    bottomCurve: -0.014,
+    foldCount: 2,
+    foldAmp: 0.005,
+  });
+
+  // Gracefully curved draped front niqab veil wrapping smoothly across cheeks and over chest
+  createCurvedArcDrape(head, veil, {
+    radiusTop: 0.252,
+    radiusBottom: 0.368,
+    height: 0.45,
+    radialSegments: 20,
+    heightSegments: 8,
+    thetaStart: -PI * 0.45,
+    thetaLength: PI * 0.90,
+    pos: [0, -0.163, 0.042],
+    topCurve: 0.012,
+    bottomCurve: 0.038,
+    bulge: 0.018,
+    foldCount: 3,
+    foldAmp: 0.014,
+    taperBottomX: 0.92,
+  });
+
+  // Curved back khimar cascade wrapping gently around the sides and draping over the upper back
+  createCurvedArcDrape(head, veil, {
+    radiusTop: 0.258,
+    radiusBottom: 0.44,
+    height: 0.64,
+    radialSegments: 22,
+    heightSegments: 6,
+    thetaStart: PI * 0.36,
+    thetaLength: PI * 1.28,
+    pos: [0, -0.22, -0.028],
+    topCurve: 0.01,
+    bottomCurve: 0.045,
+    bulge: 0.025,
+    foldCount: 4,
+    foldAmp: 0.016,
+  });
 
   newRig(root, body, head, armL, armR, legL, legR, 'niqab', m);
   return root;

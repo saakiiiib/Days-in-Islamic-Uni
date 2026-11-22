@@ -5,6 +5,8 @@ import { pointInMultiPolygon, pointInRing, pointToSegmentDistance } from '../map
 import { hashId } from './appearance.js';
 import { tintGeometry } from './facades.js';
 import { placementIndexes } from './placementIndex.js';
+import { MAIN_GATE_CONFIG } from './mainGate.js';
+import { MONUMENT_PLACEMENTS } from './landmarks/monumentsPlaza.js';
 
 export const PROP_DIMENSIONS = Object.freeze({
   bench: { width: 1.25, depth: .55, height: .96 }, lamp: { width: .28, depth: .28, height: 4.2 },
@@ -131,8 +133,21 @@ function prototype(kind) {
   const merged = mergeGeometries(parts, false); parts.forEach(p => p.dispose()); return merged;
 }
 
+const MAIN_GATE_EXCLUSION_RADIUS = 22;
+
+function outsideCeremonialPlazas(prop) {
+  if (prop.kind === 'fence') return true;
+  const gatePos = MAIN_GATE_CONFIG.position;
+  if (Math.hypot(prop.x - gatePos.x, prop.z - gatePos.z) < MAIN_GATE_EXCLUSION_RADIUS) return false;
+  for (const monument of MONUMENT_PLACEMENTS) {
+    if (Math.hypot(prop.x - monument.x, prop.z - monument.z) < monument.clearRadius) return false;
+  }
+  return true;
+}
+
 export function buildScenery(map, options = {}) {
-  const props = options.preparedProps ? structuredClone(options.preparedProps) : planScenery(map, options), group = new THREE.Group(), collisionGroup = new THREE.Group();
+  const sourceProps = options.preparedProps ? structuredClone(options.preparedProps) : planScenery(map, options);
+  const props = sourceProps.filter(outsideCeremonialPlazas), group = new THREE.Group(), collisionGroup = new THREE.Group();
   group.name = 'illustrative-campus-furniture'; collisionGroup.name = 'scenery-colliders'; collisionGroup.visible = false;
   const material = new THREE.MeshStandardMaterial({ color: 0xffffff, vertexColors: true, roughness: .82, metalness: .12 });
   const prototypes = new Map(), buckets = new Map(), colliderMaterial = new THREE.MeshBasicMaterial();

@@ -1,13 +1,20 @@
 import * as THREE from 'three';
 import { getCampusLandmark } from '../data/campus-landmarks.js';
 import { buildCentralMosque, CENTRAL_MOSQUE_ID } from './landmarks/centralMosque.js';
+import { buildCentralLibrary, CENTRAL_LIBRARY_ID } from './landmarks/centralLibrary.js';
 import { academicFacadeGeometry } from './academicFacades.js';
 import { buildAuditorium, AUDITORIUM_ID } from './landmarks/auditorium.js';
+import { buildMonumentsPlaza } from './landmarks/monumentsPlaza.js';
+import { isAcademicLandmark, buildAcademicLandmark } from './landmarks/academicLandmarks.js';
+import { isResidentialHallLandmark, buildResidentialHall, buildShahAzizurPondGhat } from './landmarks/residentialHalls.js';
+import { buildingArchitectureGeometry } from './buildingKit.js';
+import { addCampusFoliage } from './foliage.js';
+import { enhanceWaterMaterial } from './waterShader.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { buildingGeometry, surfaceGeometry, geometryMaterialPart, polygonCenter, lineSegmentsGeometry } from './geometry.js';
-import { makeBridgeGeometries, measurePath, samplePath } from './bridge.js';
+import { makeBridgeGeometries } from './bridge.js';
 import { buildRoadAppearance, ROAD_LEVELS } from './roads.js';
-import { buildingPalette, hashId, LAND_COLORS } from './appearance.js';
+import { buildingPalette, LAND_COLORS } from './appearance.js';
 import { facadeGeometry, tintGeometry, chooseEntries } from './facades.js';
 import { planReferenceVegetation } from './referenceVegetation.js';
 import { horizontalUVs, facadeUVs, ensureBatchUVs, disposeWorldTextures } from './assets.js';
@@ -50,7 +57,7 @@ class SpatialBatches {
       const mesh = new THREE.Mesh(geometry, material);
       mesh.name = `${kind}-chunk`;
       mesh.receiveShadow = true;
-      mesh.castShadow = kind === 'building' || kind === 'bridge';
+      mesh.castShadow = kind === 'building' || kind === 'building-trim' || kind === 'bridge';
       if (kind === 'road') mesh.renderOrder = 1;
       this.group.add(mesh);
       if (kind === 'building') this.buildingMeshes.push(mesh);
@@ -65,61 +72,32 @@ class SpatialBatches {
   }
 }
 
-function addTrees(mapData, group, materials, decoration) {
-  const points = [...(mapData.trees ?? [])].map(p => ({ x: p.x, z: p.z, id: p.id }));
-  for (const row of mapData.treeRows ?? []) {
-    for (const path of row.paths ?? []) {
-      if (path.length < 2) continue;
-      const { distances, length } = measurePath(path);
-      for (let d = 0; d <= length; d += 7) {
-        const p = samplePath(path, distances, d);
-        if (!points.some(q => Math.hypot(p.x - q.x, p.z - q.z) < 2)) points.push({ x: p.x, z: p.z, id: `${row.id}-${d}` });
-      }
-    }
-  }
-  points.push(...decoration.trees);
-  if (!points.length && !decoration.shrubs.length) return;
-  // A single coloured unit tree permits trunks, crowns and low shrubs to share
-  // one instanced draw, rather than adding draw calls for each planting family.
-  const trunkGeometry = new THREE.CylinderGeometry(.17, .28, 2.8, 6).translate(0, 1.4, 0);
-  const crownGeometry = new THREE.DodecahedronGeometry(1, 0).scale(2.1, 2.15, 2.1).translate(0, 3.5, 0);
-  tintGeometry(trunkGeometry, 0x745e48); tintGeometry(crownGeometry, 0x61805a);
-  trunkGeometry.deleteAttribute('uv'); crownGeometry.deleteAttribute('uv');
-  const sourceTrunk = trunkGeometry.index ? trunkGeometry.toNonIndexed() : trunkGeometry;
-  const geometry = mergeGeometries([sourceTrunk, crownGeometry], false);
-  if (sourceTrunk !== trunkGeometry) sourceTrunk.dispose(); trunkGeometry.dispose(); crownGeometry.dispose();
-  const canopy = new THREE.InstancedMesh(geometry, materials.foliage, points.length + decoration.shrubs.length);
-  const transform = new THREE.Object3D();
-  points.forEach((point, i) => {
-    const variation = (hashId(point.id) % 100) / 100;
-    transform.position.set(point.x, 0, point.z); transform.scale.setScalar(1 + variation * .28); transform.rotation.set(0, variation * Math.PI, 0); transform.updateMatrix(); canopy.setMatrixAt(i, transform.matrix);
-    canopy.setColorAt(i, new THREE.Color().setScalar(.9 + variation * .1));
-  });
-  decoration.shrubs.forEach((point, i) => {
-    transform.position.set(point.x, 0, point.z); transform.scale.set(.44, .22, .44); transform.rotation.y = hashId(point.id) % 6; transform.updateMatrix(); canopy.setMatrixAt(points.length + i, transform.matrix);
-    canopy.setColorAt(points.length + i, new THREE.Color(.95, 1, .9));
-  });
-  canopy.name = 'mapped-tree-canopies'; canopy.userData.includesTrunksAndShrubs = true;
-  canopy.castShadow = canopy.receiveShadow = true; group.add(canopy);
-}
-
 export function buildWorld(mapData, { onProgress = () => {}, preparedData = null } = {}) {
   const group = new THREE.Group(); group.name = 'islamic-university-map';
   const collisionGroup = new THREE.Group(); collisionGroup.name = 'campus-colliders'; collisionGroup.visible = false;
   const standard = (color, options = {}) => new THREE.MeshStandardMaterial({ color, roughness: 0.94, ...options });
   const materials = {
-    ground: standard(LAND_COLORS.ground), pavement: standard(0xffffff, { vertexColors: true, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }),
-    asphalt: standard(0x343b3b, { polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }),
-    paths: standard(0xd3cebc, { polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }),
-    edges: standard(0xaeb5aa, { vertexColors: true, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }),
-    building: standard(0xffffff, { vertexColors: true }), roof: standard(0xffffff, { vertexColors: true }),
-    brick: standard(0xffffff, { vertexColors: true }), shedRoof: standard(0xffffff, { vertexColors: true, metalness: .35 }),
-    windows: standard(0x4b6669, { roughness: 0.35, metalness: 0.18 }),
-    decor: standard(0xffffff, { vertexColors: true }), water: standard(LAND_COLORS.water, { roughness: 0.3, metalness: 0.15 }),
-    garden: standard(LAND_COLORS.garden), park: standard(LAND_COLORS.park), grass: standard(LAND_COLORS.grass),
-    forest: standard(LAND_COLORS.forest), orchard: standard(LAND_COLORS.orchard), pitch: standard(LAND_COLORS.pitch),
-    bridge: standard(0xc0bca6), rail: standard(0x525e61, { metalness: 0.3 }),
-    foliage: standard(0xffffff, { vertexColors: true }),
+    ground: standard(LAND_COLORS.ground, { roughness: 0.95, envMapIntensity: 0.22 }),
+    pavement: standard(0xffffff, { vertexColors: true, roughness: 0.90, envMapIntensity: 0.28, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }),
+    asphalt: standard(0x2f3538, { roughness: 0.92, envMapIntensity: 0.22, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }),
+    paths: standard(0xd3cebc, { roughness: 0.90, envMapIntensity: 0.28, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }),
+    edges: standard(0xaeb5aa, { vertexColors: true, roughness: 0.90, envMapIntensity: 0.28, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }),
+    building: standard(0xffffff, { vertexColors: true, roughness: 0.86, envMapIntensity: 0.35 }),
+    roof: standard(0xffffff, { vertexColors: true }),
+    brick: standard(0xffffff, { vertexColors: true, roughness: 0.86, envMapIntensity: 0.35 }),
+    shedRoof: standard(0xffffff, { vertexColors: true, metalness: .35, roughness: 0.62 }),
+    windows: standard(0x2a4554, { roughness: 0.12, metalness: 0.45, envMapIntensity: 1.25 }),
+    decor: standard(0xffffff, { vertexColors: true, roughness: 0.86, envMapIntensity: 0.35 }),
+    water: standard(LAND_COLORS.water, { roughness: 0.14, metalness: 0.16, envMapIntensity: 1.05 }),
+    garden: standard(LAND_COLORS.garden, { roughness: 0.95, envMapIntensity: 0.22 }),
+    park: standard(LAND_COLORS.park, { roughness: 0.95, envMapIntensity: 0.22 }),
+    grass: standard(LAND_COLORS.grass, { roughness: 0.95, envMapIntensity: 0.22 }),
+    forest: standard(LAND_COLORS.forest, { roughness: 0.95, envMapIntensity: 0.22 }),
+    orchard: standard(LAND_COLORS.orchard, { roughness: 0.95, envMapIntensity: 0.22 }),
+    pitch: standard(LAND_COLORS.pitch, { roughness: 0.95, envMapIntensity: 0.22 }),
+    bridge: standard(0xc0bca6, { roughness: 0.90, envMapIntensity: 0.28 }),
+    rail: standard(0x525e61, { metalness: 0.4, roughness: 0.55 }),
+    foliage: standard(0xffffff, { vertexColors: true, roughness: 0.92, envMapIntensity: 0.25 }),
     pitchLine: new THREE.LineBasicMaterial({ color: 0xd8dcc1, transparent: true, opacity: 0.7 }),
     debugRoad: new THREE.LineBasicMaterial({ color: 0x49e7f0, transparent: true, opacity: .8, depthTest: false }),
     debugBuilding: new THREE.LineBasicMaterial({ color: 0xffbd54, transparent: true, opacity: .9, depthTest: false }),
@@ -127,6 +105,11 @@ export function buildWorld(mapData, { onProgress = () => {}, preparedData = null
   // Concrete roof/wall appearance is carried by their own UVs and vertex tints;
   // sharing the material retains batching instead of doubling academic chunks.
   materials.roof.dispose(); materials.roof = materials.building;
+  const waterEnhancer = enhanceWaterMaterial(materials.water);
+  // Keep calibrated lake sheen even after the browser ripple normal-map enhancer attaches.
+  materials.water.roughness = 0.14;
+  materials.water.metalness = 0.16;
+  materials.water.envMapIntensity = 1.05;
   const batches = new SpatialBatches(group, collisionGroup);
   const bounds = mapData.bounds;
   const ground = new THREE.PlaneGeometry(bounds.maxX - bounds.minX, bounds.maxZ - bounds.minZ);
@@ -149,7 +132,7 @@ export function buildWorld(mapData, { onProgress = () => {}, preparedData = null
   for (const water of mapData.water ?? []) {
     for (const polygon of water.polygons) {
       const [x, z] = polygonCenter(polygon);
-      batches.add(surfaceGeometry(polygon, 0.021), materials.water, x, z, { kind: 'water' });
+      batches.add(horizontalUVs(surfaceGeometry(polygon, 0.021), 14), materials.water, x, z, { kind: 'water' });
     }
   }
   onProgress('Joining roads and opening walking connections');
@@ -172,7 +155,10 @@ export function buildWorld(mapData, { onProgress = () => {}, preparedData = null
   const entryTreatments = [], landmarkModels = [], academicFacadeProfiles = [];
   for (const building of mapData.buildings ?? []) {
     const isCentralMosque = building.osmType === 'way' && building.id === CENTRAL_MOSQUE_ID;
+    const isCentralLibrary = building.osmType === 'way' && building.id === CENTRAL_LIBRARY_ID;
     const isAuditorium = building.osmType === 'relation' && building.id === AUDITORIUM_ID;
+    const isAcademic = isAcademicLandmark(building);
+    const isHall = isResidentialHallLandmark(building);
     const palette = buildingPalette(building), entries = chooseEntries(building, mapData.roads, mapData.entrances);
     const academicFacade = academicFacadeGeometry(building, palette, entries);
     entryTreatments.push(...entries.map(e => ({ buildingId: building.id, source: e.source, nodeId: e.nodeId, position: e.edge.at(e.distance, 0, 0) })));
@@ -186,7 +172,7 @@ export function buildWorld(mapData, { onProgress = () => {}, preparedData = null
       batches.add(tintGeometry(horizontalUVs(geometryMaterialPart(geometry, 0), 3), palette.roof), roofMaterial, x, z, { collision: true, kind: 'building' });
       batches.add(tintGeometry(facadeUVs(geometryMaterialPart(geometry, 1), polygon, wallMaterial === materials.brick ? 2.5 : 3.5), palette.wall), wallMaterial, x, z, { collision: true, kind: 'building' });
       geometry.dispose();
-      const facade = isCentralMosque || isAuditorium || academicFacade ? null : facadeGeometry(polygon, building.height, palette, entries);
+      const facade = isCentralMosque || isCentralLibrary || isAuditorium || isAcademic || isHall || academicFacade ? null : facadeGeometry(polygon, building.height, palette, entries);
       if (facade) {
         batches.add(facade.windows, materials.windows, x, z, { kind: 'facade' });
         batches.add(facade.details, materials.decor, x, z, { kind: 'facade' });
@@ -198,8 +184,25 @@ export function buildWorld(mapData, { onProgress = () => {}, preparedData = null
       batches.add(academicFacade.details, materials.decor, x, z, { kind: 'facade' });
       academicFacadeProfiles.push(academicFacade.diagnostics);
     }
+    const architecture = buildingArchitectureGeometry(building, palette, entries);
+    if (architecture?.trim) {
+      const [x, z] = polygonCenter(building.polygons[0]);
+      batches.add(architecture.trim, materials.decor, x, z, { collision: false, kind: 'building-trim' });
+    }
     if (isAuditorium) {
       const model = buildAuditorium(building, { entrances: entries.length ? entries : undefined, baseHeight: building.height });
+      landmarkModels.push(model); group.add(model.group);
+    }
+    if (isCentralLibrary) {
+      const model = buildCentralLibrary(building, { entrances: entries.length ? entries : undefined, baseHeight: building.height });
+      landmarkModels.push(model); group.add(model.group);
+    }
+    if (isAcademic) {
+      const model = buildAcademicLandmark(building, { entrances: entries.length ? entries : undefined, baseHeight: building.height });
+      landmarkModels.push(model); group.add(model.group);
+    }
+    if (isHall) {
+      const model = buildResidentialHall(building, { entrances: entries.length ? entries : undefined, palette, baseHeight: building.height });
       landmarkModels.push(model); group.add(model.group);
     }
   }
@@ -217,8 +220,14 @@ export function buildWorld(mapData, { onProgress = () => {}, preparedData = null
   batches.finish();
   const waterDetails = buildWaterDetails(mapData);
   group.add(waterDetails.group);
+  const monumentsPlaza = buildMonumentsPlaza(mapData);
+  landmarkModels.push(monumentsPlaza);
+  group.add(monumentsPlaza.group);
+  const pondGhat = buildShahAzizurPondGhat(mapData);
+  landmarkModels.push(pondGhat);
+  group.add(pondGhat.group);
   const vegetation = preparedData?.vegetation ?? planReferenceVegetation(mapData);
-  addTrees(mapData, group, materials, vegetation);
+  addCampusFoliage(mapData, group, materials, vegetation);
   const scenery = buildScenery(mapData, { vegetation, preparedProps: preparedData?.scenery });
   group.add(scenery.group);
   const mainGate = buildMainGate({ mapData });
@@ -238,11 +247,13 @@ export function buildWorld(mapData, { onProgress = () => {}, preparedData = null
   let elapsed = 0, disposed = false;
   const world = {
     group, collisionGroup, materials, scenery, bridgeMeshes: batches.bridgeMeshes, buildingMeshes: batches.buildingMeshes,
-    landmarkModels, academicFacadeProfiles, waterDetails,
+    landmarkModels, academicFacadeProfiles, waterDetails, mainGate, monumentsPlaza, pondGhat,
     landmarkRecords: (mapData.buildings ?? []).map(getCampusLandmark).filter(Boolean),
     decoration: { roads: roadAppearance, vegetation, entryTreatments }, footprintDebug, labelAnchors: mapData.places ?? [],
     update(dt) {
       elapsed += Math.max(0, dt);
+      waterEnhancer.update(dt);
+      for (const model of landmarkModels) model.update?.(dt);
       // Restrained tonal movement suggests a breeze on the water, with no
       // per-vertex work and no animated world geometry in the collision tree.
       const lightness = 1 + Math.sin(elapsed * 0.55) * 0.018;
@@ -251,6 +262,7 @@ export function buildWorld(mapData, { onProgress = () => {}, preparedData = null
     dispose() {
       if (disposed) return;
       disposed = true;
+      waterEnhancer.dispose();
       landmarkModels.forEach(model => model.dispose());
       waterDetails.dispose();
       disposeWorldTextures(world); scenery.dispose(); mainGate?.dispose();

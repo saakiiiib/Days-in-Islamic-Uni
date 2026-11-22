@@ -51,7 +51,7 @@ export class HUD {
     scale.style.width = `${$('minimap').clientWidth * 100 / this.map.span}px`;
     if (this.toastUntil && performance.now() > this.toastUntil) { $('toast').hidden = true; this.toastUntil = 0; }
     if (this.debug) $('debug-text').textContent = [
-      `GTA Islamic University · LIVING CAMPUS · ${inspection ? 'INSPECTION' : driving ? 'ELECTRIC VAN' : 'STUDENT'}`,
+      `Days in Islamic Uni · LIVING CAMPUS · ${inspection ? 'INSPECTION' : driving ? 'ELECTRIC VAN' : 'STUDENT'}`,
       `FPS ${fps.toFixed(0)} · draw calls ${renderer.info.render.calls} · triangles ${renderer.info.render.triangles.toLocaleString()}`,
       `Position ${p.x.toFixed(2)}, ${p.y.toFixed(2)}, ${p.z.toFixed(2)} m`,
       `Grounded ${player.grounded} · speed ${player.speed.toFixed(2)} m/s`,

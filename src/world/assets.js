@@ -122,8 +122,14 @@ export function createWorldAssetPipeline({
     for (const key of MATERIAL_ASSETS[asset]) {
       const material = world.materials[key]; if (!material) continue;
       material.map = color; material.normalMap = normal; material.normalScale.setScalar(asset === 'Grass004' ? .3 : asset === 'Asphalt010' ? .45 : .5);
-      material.roughnessMap = orm; material.metalnessMap = orm; material.aoMap = orm; material.aoMapIntensity = .35;
-      material.roughness = 1; material.metalness = asset === 'CorrugatedSteel005' ? .55 : 0;
+      material.aoMap = orm; material.aoMapIntensity = .35;
+      if (asset === 'Grass004') {
+        material.roughnessMap = null; material.metalnessMap = null;
+        material.roughness = 0.96; material.metalness = 0;
+      } else {
+        material.roughnessMap = orm; material.metalnessMap = orm;
+        material.roughness = 1; material.metalness = asset === 'CorrugatedSteel005' ? .55 : 0;
+      }
       if (asset === 'Asphalt010') material.color.setHex(0xc6c9c7);
       else if (asset === 'Grass004') material.color.setHex(0xbfc6ad);
       material.needsUpdate = true;
